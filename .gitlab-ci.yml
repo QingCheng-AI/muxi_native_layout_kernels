@@ -1,0 +1,50 @@
+stages:
+    - format
+    - env
+
+variables:
+    VENV: "/home/gitlab-runner/venv-native-layout-ci"
+    GIT_SUBMODULE_STRATEGY: recursive
+
+
+############################################################################################################
+# Format
+
+format_check:
+    stage: format
+    tags:
+        - dev
+    script:
+        - source /home/spack/spack/share/spack/setup-env.sh
+        - spack load --first llvm
+        - find ./csrc -type f \( -name '*.cu' -o -name '*.cuh' -o -name '*.h' \) -exec clang-format --dry-run -Werror {} +
+
+
+############################################################################################################
+# Build
+
+env_build_muxi:
+    stage: env
+    tags:
+        - muxi
+    script:
+        - export PATH=/opt/maca/mxgpu_llvm/bin:/opt/maca/bin:$PATH
+        - export MACA_PATH=/opt/maca
+        - export LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/mxgpu_llvm/lib:$LD_LIBRARY_PATH
+        - source $VENV/bin/activate 
+        # Old pip won't reinstall local dependencies, so we need to upgrade it first.
+        - which python
+        - which pip
+        - pip cache purge
+        - pip install -U pip -i https://pypi.tuna.tsinghua.edu.cn/simple
+        - pip install -U /home/share/software/maca-pytorch2.1-py38-2.25.2.8-x86_64/2.25.2.8/wheel/*.whl -i https://pypi.tuna.tsinghua.edu.cn/simple
+        - pip install -e .
+        - grun python benchmark_and_test/gemm_benchmark_test_bf16.py
+        - grun python benchmark_and_test/gemm_benchmark_test_fp16.py
+        - grun python benchmark_and_test/gemm_benchmark_hgemm.py
+        - grun python benchmark_and_test/gemv_benchmark.py
+        - grun python benchmark_and_test/gemv_benchmark_soft_fp8.py
+        - grun python benchmark_and_test/test_muxi_moe.py
+        - grun python benchmark_and_test/test_muxi_moe_softfp8.py
+        - grun python benchmark_and_test/benchmark_muxi_moe.py
+

@@ -1,0 +1,12 @@
+/build
+*.so
+*.egg-info
+/dev
+.vscode/
+gemm_benchmark_results.csv
+
+# Python
+*.pyc
+
+# Vim
+.*.swp
