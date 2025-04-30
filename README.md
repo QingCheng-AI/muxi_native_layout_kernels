@@ -6,7 +6,7 @@
 
 传统的矩阵乘类算子需要在其内部进行多次 layout 转换，包括将输入转换成 mma 需要的 layout、调用 mma 做 tensor core 计算、把 mma 的 layout 转成输出。而其中 mma 的 layout 与具体硬件以及不同数据类型和大小的 mma 指令相关。下图是一个直观例子：
 
-![](/docs/mma_layout.png)
+<img width="835" alt="mma_layout" src="https://github.com/user-attachments/assets/99bc80d4-2eb8-494a-9e02-15ab7274015d" />
 
 如图是一个 16x16x16 大小的 mma，要求 A 矩阵按左侧子图排列，B 和 C 矩阵按右侧子图排列。左侧子图表示矩阵第 0 行第 0 至 3 列要放在线程 T0，4 至 7 列要放在线程 T16，以此类推。
 
