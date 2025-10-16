@@ -2,6 +2,7 @@ from typing import Callable, List, Optional
 import torch
 import muxi_layout_kernels
 
+
 def fused_moe(
     hidden_states: torch.Tensor,  # [batch_size, hidden_size]
     w1: torch.Tensor,
@@ -47,7 +48,8 @@ def fused_moe(
     # 1. Compute the gating output
     topk_ids = torch.empty(B, topk, dtype=torch.int32, device=hidden_states.device)
     topk_weights = torch.empty(
-        B, topk, dtype=hidden_states.dtype, device=hidden_states.device)
+        B, topk, dtype=hidden_states.dtype, device=hidden_states.device
+    )
 
     if score_func == "softmax":
         score_fun = 0
@@ -70,10 +72,7 @@ def fused_moe(
     )
 
     if renormalize:
-        topk_weights = (
-            topk_weights
-            / topk_weights.sum(dim=-1, keepdim=True)
-        )
+        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
     # 2. Compute the experts output
     e1, m1, k1 = w1.shape
@@ -136,7 +135,7 @@ def fused_moe(
             padded_num_experts,
             experts_ids,
             C,
-            y
+            y,
         )
     del sorted_token_ids, cumsum_buffer, padded_num_experts, experts_ids, C
 

@@ -700,30 +700,30 @@ void fused_softmax_topk_launcher(const T *input, int score_fun,
                                  const int numExperts,
                                  const T *bias = nullptr) {
     switch (numExperts) {
-    // case 1:
-    //   LAUNCH_SOFTMAX_TOPK(1);
-    //   break;
-    // case 2:
-    //   LAUNCH_SOFTMAX_TOPK(2);
-    //   break;
-    // case 4:
-    //   LAUNCH_SOFTMAX_TOPK(4);
-    //   break;
-    // case 8:
-    //   LAUNCH_SOFTMAX_TOPK(8);
-    //   break;
-    // case 16:
-    //   LAUNCH_SOFTMAX_TOPK(16);
-    //   break;
-    // case 32:
-    //   LAUNCH_SOFTMAX_TOPK(32);
-    //   break;
-    // case 64:
-    //   LAUNCH_SOFTMAX_TOPK(64);
-    //   break;
-    // case 128:
-    //   LAUNCH_SOFTMAX_TOPK(128);
-    //   break;
+    case 1:
+        LAUNCH_SOFTMAX_TOPK(1);
+        break;
+    case 2:
+        LAUNCH_SOFTMAX_TOPK(2);
+        break;
+    case 4:
+        LAUNCH_SOFTMAX_TOPK(4);
+        break;
+    case 8:
+        LAUNCH_SOFTMAX_TOPK(8);
+        break;
+    case 16:
+        LAUNCH_SOFTMAX_TOPK(16);
+        break;
+    case 32:
+        LAUNCH_SOFTMAX_TOPK(32);
+        break;
+    case 64:
+        LAUNCH_SOFTMAX_TOPK(64);
+        break;
+    case 128:
+        LAUNCH_SOFTMAX_TOPK(128);
+        break;
     case 256:
         LAUNCH_SOFTMAX_TOPK(256);
         break;

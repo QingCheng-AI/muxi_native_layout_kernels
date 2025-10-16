@@ -1,5 +1,54 @@
+import shutil
+import sys
+import os
+
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
+
+
+def get_version_from_gplusplus_executable(gplusplus_executable):
+    return int(os.popen(gplusplus_executable + " -dumpversion").read().strip())
+
+
+def find_gplusplus_version(version_high_bound):
+    """
+    Find the command of g++ version <= version_high_bound
+
+    The reason of this version bound is from the fact that mxcc is based on clang++, while
+    clang++ uses libstdc++ from g++, and clang++ from mxcc is too old for some new versions
+    of libstdc++.
+    """
+
+    candidates = ["g++"]
+    for v in range(version_high_bound, 1, -1):
+        candidates.append(f"g++-{v}")
+    for candidate in candidates:
+        if shutil.which(candidate):
+            if (
+                version := get_version_from_gplusplus_executable(candidate)
+            ) <= version_high_bound:
+                return version
+    return None
+
+
+host_compile_flags = ["-std=c++20"]
+device_compile_flags = [
+    "-x",
+    "maca",
+    "-std=c++20",
+    "-mllvm",
+    "-metaxgpu-disable-bsm-offset=0",
+    "-mllvm",
+    "-metaxgpu-force-global-saddr=1",
+    # "--res-usage",  # Please set `--verbose` to `pip install .` to see the message from `--res-usage`.
+]
+if (gcc_version := find_gplusplus_version(version_high_bound=11)) is not None:
+    device_compile_flags += [f"--gcc-version={gcc_version}"]
+else:
+    print(
+        f"WARNING: Failed to find g++ <= {version_high_bound}, which may not be compatible with mxcc.",
+        file=sys.stderr,
+    )
 
 setup(
     name="muxi_layout_kernels",
@@ -25,17 +74,8 @@ setup(
                 "./csrc/fp8_weight_repack.cu",
             ],
             extra_compile_args={
-                "cxx": ["-std=c++17"],
-                "nvcc": [  # Yes, it's "nvcc" for "mxcc"
-                    "-x",
-                    "maca",
-                    "-std=c++17",
-                    "-mllvm",
-                    "-metaxgpu-disable-bsm-offset=0",
-                    "-mllvm",
-                    "-metaxgpu-force-global-saddr=1",
-                    # "--res-usage",  # Please set `--verbose` to `pip install .` to see the message from `--res-usage`.
-                ],
+                "cxx": host_compile_flags,
+                "nvcc": device_compile_flags,  # Yes, it's "nvcc" for "mxcc"
             },
         )
     ],

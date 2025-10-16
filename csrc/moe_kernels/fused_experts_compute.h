@@ -7,15 +7,14 @@
 #include "soft_fp8_group_gemm_first.h"
 #include "soft_fp8_group_gemm_second.h"
 
-template <typename W, typename Taccum, typename A>
+template <int num_experts, typename W, typename Taccum, typename A>
 void fused_experts_compute(W *experts_weights_matrix1,
                            W *experts_weights_matrix2, A *activations, int m1,
                            int n1, int k1, int m2, int n2, int k2,
-                           int batchsize, int num_experts, int topK,
-                           int *expertsIds, A *activedExpertsWeights,
-                           int *dev_sorted_token_ids, int *dev_cumsum_buffer,
-                           int *dev_padded_num_experts, int *dev_experts_ids,
-                           A *dev_C, A *y) {
+                           int batchsize, int topK, int *expertsIds,
+                           A *activedExpertsWeights, int *dev_sorted_token_ids,
+                           int *dev_cumsum_buffer, int *dev_padded_num_experts,
+                           int *dev_experts_ids, A *dev_C, A *y) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
     constexpr int micro_batchsize = 16;
@@ -32,19 +31,14 @@ void fused_experts_compute(W *experts_weights_matrix1,
     int block_dim_x =
         num_experts <= 8
             ? 64
-            : (num_experts <= 16 ? 128 : (num_experts <= 32 ? 128 : (256)));
+            : (num_experts <= 16 ? 128 : (num_experts <= 32 ? 128 : 256));
     int block_dim_x_2 = std::min(256, block_dim_x);
     int num_blocks = (topK * batchsize + block_dim_x_2 - 1) / block_dim_x_2;
 
-    if (num_experts == 256) {
-        moe_align_tokens_kernel<256, micro_batchsize>
-            <<<1, block_dim_x, 0, stream>>>(
-                expertsIds, dev_experts_ids, dev_padded_num_experts,
-                topK * batchsize, max_num_m_blocks, dev_cumsum_buffer);
-    } else {
-        assert(false &&
-               "Unsupported number of experts, now just support 256 experts");
-    }
+    moe_align_tokens_kernel<num_experts, micro_batchsize>
+        <<<1, block_dim_x, 0, stream>>>(
+            expertsIds, dev_experts_ids, dev_padded_num_experts,
+            topK * batchsize, max_num_m_blocks, dev_cumsum_buffer);
 
     moe_align_tokens_sorted_token_ids_kernel<<<num_blocks, block_dim_x_2, 0,
                                                stream>>>(
@@ -53,11 +47,11 @@ void fused_experts_compute(W *experts_weights_matrix1,
 
     // second part, group gemms and silu_and_mul
 
-    constexpr int APerWarp = 2; // 2
-    constexpr int splitK = 3;   // 3
-    constexpr int tile_m = 128; // 128
-    constexpr int tile_n = 16;  // 16
-    constexpr int tile_k = 128; // 128
+    constexpr int APerWarp = 2;
+    constexpr int splitK = 3;
+    constexpr int tile_m = 128;
+    constexpr int tile_n = 16;
+    constexpr int tile_k = 128;
     constexpr int block_dim_x_gemm = 256;
 
     int max_gemm_count = max_num_m_blocks;
@@ -90,17 +84,16 @@ void fused_experts_compute(W *experts_weights_matrix1,
 }
 
 // This is specifically for the case when using soft fp8
-template <typename W, typename Taccum, typename A>
+template <int num_experts, typename W, typename Taccum, typename A>
 void fused_experts_compute(W *experts_weights_matrix1,
                            W *experts_weights_matrix2, A *activations, int m1,
                            int n1, int k1, int m2, int n2, int k2,
-                           int batchsize, int num_experts, int topK,
-                           int *expertsIds, A *activedExpertsWeights,
-                           int *dev_sorted_token_ids, int *dev_cumsum_buffer,
-                           int *dev_padded_num_experts, int *dev_experts_ids,
-                           A *dev_C, A *y, Taccum *w1_scale, Taccum *w2_scale,
-                           int w1_scale_m, int w1_scale_n, int w2_scale_m,
-                           int w2_scale_n) {
+                           int batchsize, int topK, int *expertsIds,
+                           A *activedExpertsWeights, int *dev_sorted_token_ids,
+                           int *dev_cumsum_buffer, int *dev_padded_num_experts,
+                           int *dev_experts_ids, A *dev_C, A *y,
+                           Taccum *w1_scale, Taccum *w2_scale, int w1_scale_m,
+                           int w1_scale_n, int w2_scale_m, int w2_scale_n) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
     constexpr int micro_batchsize = 16;
@@ -121,15 +114,10 @@ void fused_experts_compute(W *experts_weights_matrix1,
     int block_dim_x_2 = std::min(256, block_dim_x);
     int num_blocks = (topK * batchsize + block_dim_x_2 - 1) / block_dim_x_2;
 
-    if (num_experts == 256) {
-        moe_align_tokens_kernel<256, micro_batchsize>
-            <<<1, block_dim_x, 0, stream>>>(
-                expertsIds, dev_experts_ids, dev_padded_num_experts,
-                topK * batchsize, max_num_m_blocks, dev_cumsum_buffer);
-    } else {
-        assert(false &&
-               "Unsupported number of experts, now just support 256 experts");
-    }
+    moe_align_tokens_kernel<num_experts, micro_batchsize>
+        <<<1, block_dim_x, 0, stream>>>(
+            expertsIds, dev_experts_ids, dev_padded_num_experts,
+            topK * batchsize, max_num_m_blocks, dev_cumsum_buffer);
 
     moe_align_tokens_sorted_token_ids_kernel<<<num_blocks, block_dim_x_2, 0,
                                                stream>>>(
@@ -138,11 +126,11 @@ void fused_experts_compute(W *experts_weights_matrix1,
 
     // second part, group gemms and silu_and_mul
 
-    constexpr int APerWarp = 2; // 2
-    constexpr int splitK = 3;   // 3
-    constexpr int tile_m = 128; // 128
-    constexpr int tile_n = 16;  // 16
-    constexpr int tile_k = 128; // 128
+    constexpr int APerWarp = 2;
+    constexpr int splitK = 3;
+    constexpr int tile_m = 128;
+    constexpr int tile_n = 16;
+    constexpr int tile_k = 128;
     constexpr int block_dim_x_gemm = 256;
 
     int max_gemm_count = max_num_m_blocks;

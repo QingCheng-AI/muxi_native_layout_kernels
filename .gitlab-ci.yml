@@ -28,23 +28,17 @@ env_build_muxi:
     tags:
         - muxi
     script:
-        - export PATH=/opt/maca/mxgpu_llvm/bin:/opt/maca/bin:$PATH
-        - export MACA_PATH=/opt/maca
-        - export LD_LIBRARY_PATH=/opt/maca/lib:/opt/maca/mxgpu_llvm/lib:$LD_LIBRARY_PATH
-        - source $VENV/bin/activate 
-        # Old pip won't reinstall local dependencies, so we need to upgrade it first.
-        - which python
-        - which pip
-        - pip cache purge
-        - pip install -U pip -i https://pypi.tuna.tsinghua.edu.cn/simple
-        - pip install -U /home/share/software/maca-pytorch2.1-py38-2.25.2.8-x86_64/2.25.2.8/wheel/*.whl -i https://pypi.tuna.tsinghua.edu.cn/simple
-        - pip install -e .
-        - grun python benchmark_and_test/gemm_benchmark_test_bf16.py
-        - grun python benchmark_and_test/gemm_benchmark_test_fp16.py
-        - grun python benchmark_and_test/gemm_benchmark_hgemm.py
-        - grun python benchmark_and_test/gemv_benchmark.py
-        - grun python benchmark_and_test/gemv_benchmark_soft_fp8.py
-        - grun python benchmark_and_test/test_muxi_moe.py
-        - grun python benchmark_and_test/test_muxi_moe_softfp8.py
-        - grun python benchmark_and_test/benchmark_muxi_moe.py
-
+        - |
+          docker run --rm --name muxi_layout_kernels-ci \
+            --device=/dev/dri --device=/dev/mxcd --group-add video --privileged=true \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined --shm-size=100gb \
+            --ulimit memlock=-1 \
+            -v /usr/local/bin/grun:/usr/local/bin/grun:ro -v /tmp/gpu_locks:/tmp/gpu_locks \
+            -v "$(pwd):/tmp/muxi_layout_kernels:ro" \
+            maca-pytorch:3.0.0.4-torch2.6-py310-ubuntu24.04-amd64 \
+            bash --login -c '
+              mkdir -p /workspace
+              cp -r /tmp/muxi_layout_kernels /workspace/muxi_layout_kernels
+              cd /workspace/muxi_layout_kernels
+              grun ./benchmark_and_test/test_all.sh
+            '

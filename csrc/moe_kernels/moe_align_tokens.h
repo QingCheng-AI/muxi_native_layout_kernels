@@ -60,11 +60,11 @@ __global__ void moe_align_tokens_kernel(
     // prefix sum shared_counts
     for (int offset = 1; offset < blockDim.x; offset *= 2) {
         int t = 0;
-        if (threadIdx.x >= offset) {
+        if (threadIdx.x < num_experts && threadIdx.x >= offset) {
             t = shared_counts[threadIdx.x - offset];
         }
         __syncthreads();
-        if (threadIdx.x >= offset) {
+        if (threadIdx.x < num_experts && threadIdx.x >= offset) {
             shared_counts[threadIdx.x] += t;
         }
         __syncthreads();

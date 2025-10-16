@@ -26,6 +26,41 @@
 #include "re_layout_c.h"
 #include "utils.cuh"
 
+static inline void dispatchExpertCount(int expertCount,
+                                       auto &&invoke_fused_experts_compute) {
+    switch (expertCount) {
+    case 1:
+        invoke_fused_experts_compute.template operator()<1>();
+        break;
+    case 2:
+        invoke_fused_experts_compute.template operator()<2>();
+        break;
+    case 4:
+        invoke_fused_experts_compute.template operator()<4>();
+        break;
+    case 8:
+        invoke_fused_experts_compute.template operator()<8>();
+        break;
+    case 16:
+        invoke_fused_experts_compute.template operator()<16>();
+        break;
+    case 32:
+        invoke_fused_experts_compute.template operator()<32>();
+        break;
+    case 64:
+        invoke_fused_experts_compute.template operator()<64>();
+        break;
+    case 128:
+        invoke_fused_experts_compute.template operator()<128>();
+        break;
+    case 256:
+        invoke_fused_experts_compute.template operator()<256>();
+        break;
+    default:
+        TORCH_CHECK(false, "expertCount a power of two no greater than 256");
+    }
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     using namespace muxi_layout_kernels;
     using namespace pybind11::literals;
@@ -465,15 +500,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                     reinterpret_cast<half *>(activations.data_ptr());
                 auto activedExpertsWeights_ptr =
                     reinterpret_cast<half *>(activedExpertsWeights.data_ptr());
-                fused_experts_compute<half, float, half>(
-                    w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
-                    static_cast<int>(batchSize), static_cast<int>(expertCount),
-                    static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
-                    activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
-                    dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
-                    dev_experts_ids_ptr,
-                    reinterpret_cast<half *>(dev_C.data_ptr()),
-                    reinterpret_cast<half *>(y.data_ptr()));
+                dispatchExpertCount(expertCount, [&]<int expertCount>() {
+                    fused_experts_compute<expertCount, half, float, half>(
+                        w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
+                        static_cast<int>(batchSize),
+                        static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
+                        activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
+                        dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
+                        dev_experts_ids_ptr,
+                        reinterpret_cast<half *>(dev_C.data_ptr()),
+                        reinterpret_cast<half *>(y.data_ptr()));
+                });
             } else {
                 TORCH_CHECK(
                     false,
@@ -497,15 +534,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
                 auto activedExpertsWeights_ptr =
                     reinterpret_cast<__maca_bfloat16 *>(
                         activedExpertsWeights.data_ptr());
-                fused_experts_compute<__maca_bfloat16, float, __maca_bfloat16>(
-                    w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
-                    static_cast<int>(batchSize), static_cast<int>(expertCount),
-                    static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
-                    activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
-                    dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
-                    dev_experts_ids_ptr,
-                    reinterpret_cast<__maca_bfloat16 *>(dev_C.data_ptr()),
-                    reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()));
+                dispatchExpertCount(expertCount, [&]<int expertCount>() {
+                    fused_experts_compute<expertCount, __maca_bfloat16, float,
+                                          __maca_bfloat16>(
+                        w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
+                        static_cast<int>(batchSize),
+                        static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
+                        activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
+                        dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
+                        dev_experts_ids_ptr,
+                        reinterpret_cast<__maca_bfloat16 *>(dev_C.data_ptr()),
+                        reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()));
+                });
             }
         }
     });
@@ -595,19 +635,22 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             auto activedExpertsWeights_ptr =
                 reinterpret_cast<__maca_bfloat16 *>(
                     activedExpertsWeights.data_ptr());
-            fused_experts_compute<uint8_t, float, __maca_bfloat16>(
-                w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
-                static_cast<int>(batchSize), static_cast<int>(expertCount),
-                static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
-                activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
-                dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
-                dev_experts_ids_ptr,
-                reinterpret_cast<__maca_bfloat16 *>(dev_C.data_ptr()),
-                reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()),
-                reinterpret_cast<float *>(w1_scale.data_ptr()),
-                reinterpret_cast<float *>(w2_scale.data_ptr()),
-                w1_scale.size(1), w1_scale.size(2), w2_scale.size(1),
-                w2_scale.size(2));
+            dispatchExpertCount(expertCount, [&]<int expertCount>() {
+                fused_experts_compute<expertCount, uint8_t, float,
+                                      __maca_bfloat16>(
+                    w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
+                    static_cast<int>(batchSize),
+                    static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
+                    activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
+                    dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
+                    dev_experts_ids_ptr,
+                    reinterpret_cast<__maca_bfloat16 *>(dev_C.data_ptr()),
+                    reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()),
+                    reinterpret_cast<float *>(w1_scale.data_ptr()),
+                    reinterpret_cast<float *>(w2_scale.data_ptr()),
+                    w1_scale.size(1), w1_scale.size(2), w2_scale.size(1),
+                    w2_scale.size(2));
+            });
 
         } else {
             TORCH_CHECK(false, "Weight date type and activation date type "
