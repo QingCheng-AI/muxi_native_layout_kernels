@@ -123,7 +123,7 @@ layoutA_hgemm_tn_128x128x128_4m1n8k_256t_device_soft_fp8(
 
     __shared__ uint8_t WSM[0x10000]; // 64KB
 
-    FLOAT4 C_f32[4][4] = {0};
+    FLOAT4 C_f32[4][4] = {}; // = {} means all zeros
     ALdType_bf16 a[4][4];
     BLdsType b[4][4];
     uint tmp_bf16[4];

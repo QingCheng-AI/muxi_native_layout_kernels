@@ -39,7 +39,6 @@ torch::Tensor muxi_hgemm_layoutC(torch::Tensor A, torch::Tensor B, float alpha,
     const int ldc = m;
     constexpr int tile_m = 128;
     constexpr int tile_n = 128;
-    constexpr int tile_k = 128;
     uint32_t gridx = m / tile_m;
     uint32_t gridy = (n + tile_n - 1) / tile_n;
     uint32_t gridz = 1;

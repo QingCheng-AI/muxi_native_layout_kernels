@@ -1,3 +1,5 @@
+#include <cassert>
+
 #include <maca.h>
 #include <maca_bfloat16.h>
 #include <maca_fp16.h>
@@ -134,6 +136,8 @@ torch::Tensor gemv_layoutA(torch::Tensor A, torch::Tensor B, float alpha,
         KernelId = std::get<1>(result);
         KernelParam1 = std::get<2>(result);
         KernelParam2 = std::get<3>(result);
+    } else {
+        assert(false);
     }
 
     if ((KernelId == 1) && (m % (16 * KernelParam1) != 0)) {

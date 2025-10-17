@@ -58,9 +58,7 @@ layout_hgemm_tn_128x128x128_4m1n8k_256t_device_layoutC(
     constexpr int TileM = 128;
     constexpr int TileN = 128;
     constexpr int Stage = 4;
-    const int src_M = M;
     const int src_N = N;
-    const int src_K = K;
     using ALdgType = __NATIVE_VECTOR__(4, uint);
     using BLdgType = __NATIVE_VECTOR__(4, uint);
     using CStgType = __NATIVE_VECTOR__(sizeof(Tc), uint);
@@ -123,7 +121,7 @@ layout_hgemm_tn_128x128x128_4m1n8k_256t_device_layoutC(
 
     __shared__ uint8_t WSM[0x10000]; // 64KB
 
-    FLOAT4 C_f32[4][4] = {0};
+    FLOAT4 C_f32[4][4] = {}; // = {} means all zeros
     ALdsType a[4][4];
     BLdsType b[4][4];
 
@@ -770,9 +768,6 @@ layout_hgemm_tn_128x128x128_4m1n8k_256t_device_layoutC(
     }
 
     CStgType *C_ptr = reinterpret_cast<CStgType *>(C);
-    size_t C_row_offset = (size_t)(lane & 15) * (M / 4) + startRow / 16 * 4 +
-                          (lane / 16) + slot / 2 * 4 * 4;
-    size_t C_col_offset = (size_t)(startCol + (slot & 1) * 64) * M / 4;
     const int quarterWarpId = lane >> 4;
     const int quarterLaneId = lane & 15;
     const int warpStoreOffset =

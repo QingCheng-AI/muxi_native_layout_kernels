@@ -40,10 +40,6 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
         __builtin_mxc_readfirstlane(warpId * (rowsGroup / numWarps) +
                                     min(warpId, rowsGroup % numWarps)) *
         APerWarp;
-    int warpRowsGroupEnd =
-        __builtin_mxc_readfirstlane((warpId + 1) * (rowsGroup / numWarps) +
-                                    min(warpId + 1, rowsGroup % numWarps)) *
-        APerWarp;
     int numCycleA =
         __builtin_mxc_readfirstlane(k / (colThreadsPerMma * elementsPerAccess));
 
@@ -125,7 +121,6 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
             A_ptr[index_A] = reinterpret_cast<UINT4 *>(A);
         }
     int A_ptr_offset = 0;
-    int B_ptr_offset_conB = 0;
     int shared_ptr_offset = 0;
 
     // begin fill the pipeline

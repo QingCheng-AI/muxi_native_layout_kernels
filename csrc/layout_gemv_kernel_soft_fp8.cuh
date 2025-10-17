@@ -1,5 +1,8 @@
 #pragma once
 
+#include <stdexcept>
+#include <string>
+
 #include "utils.cuh"
 
 namespace muxi_layout_kernels {
@@ -16,11 +19,9 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     constexpr int rowThreadsPerMma = 16;
     constexpr int colThreadsPerMma = 4;
     constexpr int elementsPerThreadPerMma = 4;
-    constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
     const int rowsGroup = (spatialDim + rowThreadsPerMma * APerWarp - 1) /
                           rowThreadsPerMma / APerWarp;
     //   float scale = 1.0f;
-    const int scale_matrix_m = (spatialDim + scaleBlockM - 1) / scaleBlockM;
     const int scale_matrix_k = (reducedDim + scaleBlockK - 1) / scaleBlockK;
 
     using yStgType = __NATIVE_VECTOR__(sizeof(Ty), uint);
@@ -32,7 +33,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     int warpId = __builtin_mxc_readfirstlane(
                      (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE) %
                  numWarps;
-    int warpIdInBlock = (threadIdx.x / WARP_SIZE);
     int splitKId = __builtin_mxc_readfirstlane(
         ((blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE) / numWarps);
     int laneId = threadIdx.x & (WARP_SIZE - 1);
@@ -42,10 +42,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     int warpRowsGroupBegin =
         __builtin_mxc_readfirstlane(warpId * (rowsGroup / numWarps) +
                                     min(warpId, rowsGroup % numWarps)) *
-        APerWarp;
-    int warpRowsGroupEnd =
-        __builtin_mxc_readfirstlane((warpId + 1) * (rowsGroup / numWarps) +
-                                    min(warpId + 1, rowsGroup % numWarps)) *
         APerWarp;
     int splitKStart =
         __builtin_mxc_readfirstlane(splitKId * (nChunksPerRow / splitK) +
@@ -89,7 +85,7 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     yStgType *y_ptr = reinterpret_cast<yStgType *>(y);
 
     UINT2 tmpA_fp8[stages][APerWarp];
-    UINT4 tmpA[stages][APerWarp], tmpX[stages];
+    UINT4 tmpX[stages];
     FLOAT4 y_f32[APerWarp];
     uint tmpA_bf16[4];
 
@@ -114,7 +110,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
         for (int k = 0; k < stages; k++) {
             asm("/* Stop compiler reordering (A) */");
             for (int index_A = 0; index_A < APerWarp; ++index_A) {
-                // tmpA[k][index_A] = *(A_ptr[index_A] + A_ptr_offset);
                 tmpA_fp8[k][index_A] = *(A_ptr[index_A] + A_ptr_offset);
             }
             A_ptr_offset += WARP_SIZE;
@@ -138,38 +133,17 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
                                  scale_index_K];
                 scalefp8tobf16(tmpA_fp8[k][index_A][0],
                                reinterpret_cast<uint16_t *>(tmpA_bf16), scale);
-                // {
-                //   // for debug print
-                //   if (tmpA[k][index_A][0] != 0x3F803F80 ||
-                //       tmpA[k][index_A][1] != 0x3F803F80)
-                //     printf(
-                //         "i = %d, k = %d, index_A = %d, bid = %d, tid = %d, "
-                //         "tmpA[k][index_A][0] = %#X, tmpA[k][index_A][1] =
-                //         %#X\n", i, k, index_A, blockIdx.x, threadIdx.x,
-                //         tmpA[k][index_A][0], tmpA[k][index_A][1]);
-                // }
                 y_f32[index_A] =
                     mma_16x16x16f16<Tx>(tmpA_bf16[0], tmpA_bf16[1], tmpX[k][0],
                                         tmpX[k][1], y_f32[index_A]);
                 scalefp8tobf16(tmpA_fp8[k][index_A][1],
                                reinterpret_cast<uint16_t *>(tmpA_bf16 + 2),
                                scale);
-                // {
-                //   // for debug print
-                //   if (tmpA[k][index_A][2] != 0x3F803F80 ||
-                //       tmpA[k][index_A][3] != 0x3F803F80)
-                //     printf(
-                //         "i = %d, k = %d, index_A = %d, bid = %d, tid = %d, "
-                //         "tmpA[k][index_A][2] = %#X, tmpA[k][index_A][3] =
-                //         %#X\n", i, k, index_A, blockIdx.x, threadIdx.x,
-                //         tmpA[k][index_A][2], tmpA[k][index_A][3]);
-                // }
                 y_f32[index_A] =
                     mma_16x16x16f16<Tx>(tmpA_bf16[2], tmpA_bf16[3], tmpX[k][2],
                                         tmpX[k][3], y_f32[index_A]);
             }
             for (int index_A = 0; index_A < APerWarp; ++index_A) {
-                // tmpA[k][index_A] = *(A_ptr[index_A] + A_ptr_offset);
                 tmpA_fp8[k][index_A] = *(A_ptr[index_A] + A_ptr_offset);
             }
             A_ptr_offset += WARP_SIZE;
@@ -192,32 +166,12 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
                                  scale_index_K];
                 scalefp8tobf16(tmpA_fp8[k][index_A][0],
                                reinterpret_cast<uint16_t *>(tmpA_bf16), scale);
-                // {
-                //   // for debug print
-                //   if (tmpA[k][index_A][0] != 0x3F803F80 ||
-                //       tmpA[k][index_A][1] != 0x3F803F80)
-                //     printf(
-                //         "end, k = %d, index_A = %d, bid = %d, tid = %d, "
-                //         "tmpA[k][index_A][0] = %#X, tmpA[k][index_A][1] =
-                //         %#X\n", k, index_A, blockIdx.x, threadIdx.x,
-                //         tmpA[k][index_A][0], tmpA[k][index_A][1]);
-                // }
                 y_f32[index_A] =
                     mma_16x16x16f16<Tx>(tmpA_bf16[0], tmpA_bf16[1], tmpX[k][0],
                                         tmpX[k][1], y_f32[index_A]);
                 scalefp8tobf16(tmpA_fp8[k][index_A][1],
                                reinterpret_cast<uint16_t *>(tmpA_bf16 + 2),
                                scale);
-                // {
-                //   // for debug print
-                //   if (tmpA[k][index_A][2] != 0x3F803F80 ||
-                //       tmpA[k][index_A][3] != 0x3F803F80)
-                //     printf(
-                //         "end, k = %d, index_A = %d, bid = %d, tid = %d, "
-                //         "tmpA[k][index_A][2] = %#X, tmpA[k][index_A][3] =
-                //         %#X\n", k, index_A, blockIdx.x, threadIdx.x,
-                //         tmpA[k][index_A][2], tmpA[k][index_A][3]);
-                // }
                 y_f32[index_A] =
                     mma_16x16x16f16<Tx>(tmpA_bf16[2], tmpA_bf16[3], tmpX[k][2],
                                         tmpX[k][3], y_f32[index_A]);
@@ -232,7 +186,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
                  i < remainingDim / (elementsPerAccess * colThreadsPerMma);
                  ++i) {
                 for (int index_A = 0; index_A < APerWarp; ++index_A) {
-                    // tmpA[0][index_A] = *(A_ptr[index_A] + A_ptr_offset);
                     tmpA_fp8[0][index_A] = *(A_ptr[index_A] + A_ptr_offset);
                 }
                 A_ptr_offset += WARP_SIZE;
@@ -331,13 +284,12 @@ template <typename Ta, typename Tx, typename Taccum, typename Ty,
 __global__ void __launch_bounds__(BLOCK_DIM_X)
     MvSimtLayoutKernelSoftFp8(const Ta *A, const Tx *x, Ty *y, int spatialDim,
                               int reducedDim, Taccum alpha, Taccum beta,
-                              Taccum *scale_matrix, Ty *bias = nullptr) {
+                              Taccum *scale_matrix, Ty *bias = nullptr)
+    requires(BLOCK_DIM_X >= THREADS_PER_ROW)
+{
     constexpr int stages = 8;
     constexpr int elementsPerAccess = 8;
     constexpr int rowThreadsPerMma = 16;
-    constexpr int colThreadsPerMma = 4;
-    constexpr int elementsPerThreadPerMma = 4;
-    constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
 
     __shared__ UINT4
         shared_x[1024]; // Attention: just support k <= 8192 now !!!
@@ -346,18 +298,15 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
         shared_x[i] = reinterpret_cast<const UINT4 *>(x)[i];
     }
 
-    const int nChunksPerRow = reducedDim / rowThreadsPerMma / stages;
+    // {
+    //   // for debug print
+    //   const int laneId = threadIdx.x & (WARP_SIZE - 1);
+    //   const int quarterWarpId = laneId >> 2;
+    //   const int quarterLaneId = laneId & 15;
+    // }
 
-    const int numWarps = (blockDim.x * gridDim.x) / WARP_SIZE;
-    const int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
-    const int laneId = threadIdx.x & (WARP_SIZE - 1);
-    // const int quarterWarpId = laneId >> 2;
-    // const int quarterLaneId = laneId & 15;
-
-    const int scale_matrix_m = (spatialDim + scaleBlockM - 1) / scaleBlockM;
     const int scale_matrix_k = (reducedDim + scaleBlockK - 1) / scaleBlockK;
 
-    const int numWorkGroups = numWarps * WARP_SIZE / THREADS_PER_ROW;
     const int workGroupId = (blockIdx.x * blockDim.x) / THREADS_PER_ROW +
                             (threadIdx.x & (BLOCK_DIM_X / THREADS_PER_ROW - 1));
     const int workIdInGroup = threadIdx.x / (BLOCK_DIM_X / THREADS_PER_ROW);
@@ -385,7 +334,7 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     const UINT4 *x_ptr = &shared_x[workIdInGroup];
 
     UINT2 tmpA_fp8[stages];
-    UINT4 tmpA[stages], tmpX[stages];
+    UINT4 tmpX[stages];
     uint tmpA_bf16[4];
     Taccum y_sum = 0.0f;
 
@@ -436,17 +385,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
                            reinterpret_cast<uint16_t *>(tmpA_bf16), scale);
             scalefp8tobf16(tmpA_fp8[k][1],
                            reinterpret_cast<uint16_t *>(tmpA_bf16 + 2), scale);
-            // {
-            //   // for debug print
-            //   if (tmpA[k][0] != 0x3F803F80 || tmpA[k][1] != 0x3F803F80 ||
-            //       tmpA[k][2] != 0x3F803F80 || tmpA[k][3] != 0x3F803F80)
-            //     printf(
-            //         "i = %d, k = %d, bid = %d, tid = %d, "
-            //         "tmpA[k][index_A][0] = %#X, tmpA[k][index_A][1] = %#X, "
-            //         "tmpA[k][index_A][2] = %#X, tmpA[k][index_A][3] = %#X\n",
-            //         i, k, blockIdx.x, threadIdx.x, tmpA[k][0], tmpA[k][1],
-            //         tmpA[k][2], tmpA[k][3]);
-            // }
             // compute
             y_sum += static_cast<Taccum>(
                 dotBf16(reinterpret_cast<UINT4 *>(tmpA_bf16)[0], tmpX[k]));
@@ -484,17 +422,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
                            reinterpret_cast<uint16_t *>(tmpA_bf16), scale);
             scalefp8tobf16(tmpA_fp8[k][1],
                            reinterpret_cast<uint16_t *>(tmpA_bf16 + 2), scale);
-            // {
-            //   // for debug print
-            //   if (tmpA[k][0] != 0x3F803F80 || tmpA[k][1] != 0x3F803F80 ||
-            //       tmpA[k][2] != 0x3F803F80 || tmpA[k][3] != 0x3F803F80)
-            //     printf(
-            //         "end, k = %d, bid = %d, tid = %d, "
-            //         "tmpA[k][index_A][0] = %#X, tmpA[k][index_A][1] = %#X, "
-            //         "tmpA[k][index_A][2] = %#X, tmpA[k][index_A][3] = %#X\n",
-            //         k, blockIdx.x, threadIdx.x, tmpA[k][0], tmpA[k][1],
-            //         tmpA[k][2], tmpA[k][3]);
-            // }
             // compute
             y_sum += static_cast<Taccum>(
                 dotBf16(reinterpret_cast<UINT4 *>(tmpA_bf16)[0], tmpX[k]));
@@ -539,17 +466,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
                        scale);
         scalefp8tobf16(tmpA_fp8[0][1],
                        reinterpret_cast<uint16_t *>(tmpA_bf16 + 2), scale);
-        // {
-        //   // for debug print
-        //   if (tmpA[0][0] != 0x3F803F80 || tmpA[0][1] != 0x3F803F80 ||
-        //       tmpA[0][2] != 0x3F803F80 || tmpA[0][3] != 0x3F803F80)
-        //     printf(
-        //         "tail, i = %d, bid = %d, tid = %d, "
-        //         "tmpA[0][index_A][0] = %#X, tmpA[0][index_A][1] = %#X, "
-        //         "tmpA[0][index_A][2] = %#X, tmpA[0][index_A][3] = %#X\n",
-        //         i, blockIdx.x, threadIdx.x, tmpA[0][0], tmpA[0][1],
-        //         tmpA[0][2], tmpA[0][3]);
-        // }
         y_sum += static_cast<Taccum>(
             dotBf16(reinterpret_cast<UINT4 *>(tmpA_bf16)[0], tmpX[0]));
     }
@@ -645,38 +561,45 @@ void GemvMmaLayoutDispatchSoftFp8(const Ta *A, const Tx *x, Ty *y,
 #define LAUNCH_GEMV_SIMT_SOFT_FP8(ISBETAZERO, HASONEDIMBIAS, KernelParam1)     \
     auto cur_device = at::cuda::current_device();                              \
     const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if (ISBETAZERO) {                                                          \
-        if (HASONEDIMBIAS) {                                                   \
-            MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,         \
-                                      KernelParam1, scaleBlockM, scaleBlockK,  \
-                                      true, true>                              \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
+    if constexpr (BLOCK_DIM_X >= KernelParam1) {                               \
+        if (ISBETAZERO) {                                                      \
+            if (HASONEDIMBIAS) {                                               \
+                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
+                                          KernelParam1, scaleBlockM,           \
+                                          scaleBlockK, true, true>             \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
+                        scale_matrix, bias);                                   \
+            } else {                                                           \
+                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
+                                          KernelParam1, scaleBlockM,           \
+                                          scaleBlockK, true, false>            \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
+                        scale_matrix, bias);                                   \
+            }                                                                  \
         } else {                                                               \
-            MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,         \
-                                      KernelParam1, scaleBlockM, scaleBlockK,  \
-                                      true, false>                             \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
+            if (HASONEDIMBIAS) {                                               \
+                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
+                                          KernelParam1, scaleBlockM,           \
+                                          scaleBlockK, false, true>            \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
+                        scale_matrix, bias);                                   \
+            } else {                                                           \
+                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
+                                          KernelParam1, scaleBlockM,           \
+                                          scaleBlockK, false, false>           \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
+                        scale_matrix, bias);                                   \
+            }                                                                  \
         }                                                                      \
     } else {                                                                   \
-        if (HASONEDIMBIAS) {                                                   \
-            MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,         \
-                                      KernelParam1, scaleBlockM, scaleBlockK,  \
-                                      false, true>                             \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
-        } else {                                                               \
-            MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,         \
-                                      KernelParam1, scaleBlockM, scaleBlockK,  \
-                                      false, false>                            \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
-        }                                                                      \
+        throw std::runtime_error("KernelParam1 (" +                            \
+                                 std::to_string(KernelParam1) +                \
+                                 ") should be no greater than BLOCK_DIM_X (" + \
+                                 std::to_string(BLOCK_DIM_X) + ").");          \
     }
 
     if (KernelId == 1) {
@@ -808,6 +731,10 @@ void GemvMmaLayoutDispatchSoftFp8(const Ta *A, const Tx *x, Ty *y,
             LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 7);
         } else if (KernelParam1 == 8 && KernelParam2 == 8) {
             LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 8);
+        } else {
+            throw std::runtime_error(
+                "Unsupported KernelParam1 " + std::to_string(KernelParam1) +
+                " and KernelParam2 " + std::to_string(KernelParam2));
         }
     } else if (KernelId == 2) {
         if (KernelParam1 == 1) {
@@ -832,6 +759,9 @@ void GemvMmaLayoutDispatchSoftFp8(const Ta *A, const Tx *x, Ty *y,
             LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 512);
         } else if (KernelParam1 == 1024) {
             LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 1024);
+        } else {
+            throw std::runtime_error("Unsupported KernelParam1 " +
+                                     std::to_string(KernelParam1));
         }
     }
 

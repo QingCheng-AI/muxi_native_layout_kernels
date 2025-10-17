@@ -17,10 +17,6 @@ __device__ void fused_moe_second_gemm_kernel(Ta *A, Tb *B, Tc *C,
         tile_k / (elementsPerThreadPerMma * elementsPerAccess);
     constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
 
-    const int colsGroup =
-        __builtin_mxc_readfirstlane((n + tile_n - 1) / tile_n);
-    const int rowsGroup =
-        __builtin_mxc_readfirstlane((m + tile_m - 1) / tile_m);
     const int warpIdInBlock =
         __builtin_mxc_readfirstlane(threadIdx.x / WARP_SIZE);
     const int laneId = threadIdx.x & (WARP_SIZE - 1);
@@ -38,7 +34,6 @@ __device__ void fused_moe_second_gemm_kernel(Ta *A, Tb *B, Tc *C,
     using CStgType = __NATIVE_VECTOR__(sizeof(Tc), uint);
 
     __shared__ UINT4 shared_data[micro_batchsize * tile_k / elementsPerAccess];
-    const UINT4 *shared_B_ptr = &shared_data[0];
     UINT4 *shared_B_stages[stages];
     UINT4 *A_ptr_stages[stages], *B_ptr_stages[stages][loadBPerStage];
     CStgType *C_ptr = reinterpret_cast<CStgType *>(C);

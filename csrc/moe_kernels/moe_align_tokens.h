@@ -40,8 +40,6 @@ __global__ void moe_align_tokens_kernel(
     for (int i = start_idx;
          i < topk_ids_numel && i < start_idx + tokens_per_thread; i++) {
         int expert_id = topk_ids[i];
-        int warp_idx = expert_id / experts_per_warp;
-        int expert_offset = expert_id % experts_per_warp;
         atomicAdd(&shared_counts[expert_id], 1);
     }
 

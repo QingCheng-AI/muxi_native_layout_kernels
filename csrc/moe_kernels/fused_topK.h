@@ -30,7 +30,9 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     fused_softmax_topk_kernel(const T *input, const int batchSize,
                               const int n_groups, const int topK_groups,
                               int *expertsIds, T *selectedExpertsWeights,
-                              const T *bias) {
+                              const T *bias)
+    requires(NUM_EXPERTS >= VPT)
+{
     static constexpr int ELTS_PER_LDG = BYTES_PER_LDG / sizeof(T);
     static constexpr int ELTS_PER_ROW = NUM_EXPERTS;
     static constexpr int THREADS_PER_ROW = ELTS_PER_ROW / VPT;
@@ -173,8 +175,6 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
             __hadd(max_score_in_experts_group_tmp, max_score_in_experts_group);
     }
     // ===== Second, find the topK_groups. =====
-    const int threadIdInexpertsGroup =
-        threadIdInGroup % (experts_per_group / VPT);
     // Simply consider that topK is greater than or equal topK_groups
     T topK_groups_weights[topK];
     int topK_groups_id[topK];
@@ -337,7 +337,9 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     fused_sigmoid_topk_kernel(const T *input, const int batchSize,
                               const int n_groups, const int topK_groups,
                               int *expertsIds, T *selectedExpertsWeights,
-                              const T *bias) {
+                              const T *bias)
+    requires(NUM_EXPERTS >= VPT)
+{
     static constexpr int ELTS_PER_LDG = BYTES_PER_LDG / sizeof(T);
     static constexpr int ELTS_PER_ROW = NUM_EXPERTS;
     static constexpr int THREADS_PER_ROW = ELTS_PER_ROW / VPT;
@@ -452,8 +454,6 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     }
 
     // ===== Second, find the topK_groups. =====
-    const int threadIdInexpertsGroup =
-        threadIdInGroup % (experts_per_group / VPT);
     // Simply consider that topK is greater than or equal topK_groups
     T topK_groups_weights[topK];
     int topK_groups_id[topK];
@@ -615,14 +615,17 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
 namespace detail {
 // Constructs some constants needed to partition the work across threads at
 // compile time.
-template <typename T, int EXPERTS, int BYTES_PER_LDG> struct TopkConstants {
-    static constexpr int ELTS_PER_LDG = BYTES_PER_LDG / sizeof(T);
-    static_assert(EXPERTS / (ELTS_PER_LDG * WARP_SIZE) == 0 ||
-                      EXPERTS % (ELTS_PER_LDG * WARP_SIZE) == 0,
-                  "");
-    static constexpr int VECs_PER_THREAD =
-        MAX(1, EXPERTS / (ELTS_PER_LDG * WARP_SIZE));
-    static constexpr int VPT = VECs_PER_THREAD * ELTS_PER_LDG;
+template <typename T, int EXPERTS, int BYTES_PER_LDG,
+          int _ELTS_PER_LDG = BYTES_PER_LDG / sizeof(T),
+          int _VECs_PER_THREAD = MAX(1, EXPERTS / (_ELTS_PER_LDG * WARP_SIZE)),
+          int _VPT = _VECs_PER_THREAD * _ELTS_PER_LDG>
+    requires((EXPERTS / (_ELTS_PER_LDG * WARP_SIZE) == 0 ||
+              EXPERTS % (_ELTS_PER_LDG * WARP_SIZE) == 0) &&
+             EXPERTS >= _VPT)
+struct TopkConstants {
+    static constexpr int ELTS_PER_LDG = _ELTS_PER_LDG;
+    static constexpr int VECs_PER_THREAD = _VECs_PER_THREAD;
+    static constexpr int VPT = _VPT;
     static constexpr int THREADS_PER_ROW = EXPERTS / VPT;
     //   static const int ROWS_PER_WARP = WARP_SIZE / THREADS_PER_ROW;
 };
@@ -639,8 +642,6 @@ void fused_softmax_topk_dispatcher(const T *input, const int score_fun,
 
     using Constants = detail::TopkConstants<T, EXPERTS, BYTES_PER_LDG>;
 
-    static constexpr int A = Constants::ELTS_PER_LDG;
-    static constexpr int VECs_PER_THREAD = Constants::VECs_PER_THREAD;
     static constexpr int THREADS_PER_ROW = Constants::THREADS_PER_ROW;
     static constexpr int VPT = Constants::VPT;
     const int ROWS_PER_WARP = WARP_SIZE / THREADS_PER_ROW;
@@ -700,15 +701,15 @@ void fused_softmax_topk_launcher(const T *input, int score_fun,
                                  const int numExperts,
                                  const T *bias = nullptr) {
     switch (numExperts) {
-    case 1:
-        LAUNCH_SOFTMAX_TOPK(1);
-        break;
-    case 2:
-        LAUNCH_SOFTMAX_TOPK(2);
-        break;
-    case 4:
-        LAUNCH_SOFTMAX_TOPK(4);
-        break;
+    // case 1:
+    //     LAUNCH_SOFTMAX_TOPK(1);
+    //     break;
+    // case 2:
+    //     LAUNCH_SOFTMAX_TOPK(2);
+    //     break;
+    // case 4:
+    //     LAUNCH_SOFTMAX_TOPK(4);
+    //     break;
     case 8:
         LAUNCH_SOFTMAX_TOPK(8);
         break;

@@ -53,10 +53,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
         __builtin_mxc_readfirstlane(warpId * (rowsGroup / numWarps) +
                                     min(warpId, rowsGroup % numWarps)) *
         APerWarp;
-    int warpRowsGroupEnd =
-        __builtin_mxc_readfirstlane((warpId + 1) * (rowsGroup / numWarps) +
-                                    min(warpId + 1, rowsGroup % numWarps)) *
-        APerWarp;
     int numCycleA =
         __builtin_mxc_readfirstlane(k / (colThreadsPerMma * elementsPerAccess));
 
@@ -306,10 +302,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
         tile_k / (elementsPerThreadPerMma * elementsPerAccess);
     constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
 
-    const int colsGroup =
-        __builtin_mxc_readfirstlane((n + tile_n - 1) / tile_n);
-    const int rowsGroup =
-        __builtin_mxc_readfirstlane((m + tile_m - 1) / tile_m);
     const int warpIdInBlock =
         __builtin_mxc_readfirstlane(threadIdx.x / WARP_SIZE);
     const int laneId = threadIdx.x & (WARP_SIZE - 1);
@@ -326,9 +318,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
 
     __shared__ UINT4
         shared_data[(tile_m + tile_n) * tile_k / elementsPerAccess];
-    const UINT4 *shared_A_ptr = &shared_data[0];
-    const UINT4 *shared_B_ptr =
-        &shared_data[tile_m * tile_k / elementsPerAccess];
     UINT4 *shared_A_stages[stages], *shared_B_stages[stages];
     UINT4 *A_ptr_stages[stages], *B_ptr_stages[stages];
     CStgType *C_ptr = reinterpret_cast<CStgType *>(C);

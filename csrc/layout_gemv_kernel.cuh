@@ -1,4 +1,8 @@
 #pragma once
+
+#include <stdexcept>
+#include <string>
+
 #include <maca.h>
 #include <maca_bfloat16.h>
 #include <maca_fp16.h>
@@ -19,7 +23,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     constexpr int rowThreadsPerMma = 16;
     constexpr int colThreadsPerMma = 4;
     constexpr int elementsPerThreadPerMma = 4;
-    constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
     const int rowsGroup = (spatialDim + rowThreadsPerMma * APerWarp - 1) /
                           rowThreadsPerMma / APerWarp;
 
@@ -32,7 +35,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     int warpId = __builtin_mxc_readfirstlane(
                      (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE) %
                  numWarps;
-    int warpIdInBlock = (threadIdx.x / WARP_SIZE);
     int splitKId = __builtin_mxc_readfirstlane(
         ((blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE) / numWarps);
     int laneId = threadIdx.x & (WARP_SIZE - 1);
@@ -42,10 +44,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     int warpRowsGroupBegin =
         __builtin_mxc_readfirstlane(warpId * (rowsGroup / numWarps) +
                                     min(warpId, rowsGroup % numWarps)) *
-        APerWarp;
-    int warpRowsGroupEnd =
-        __builtin_mxc_readfirstlane((warpId + 1) * (rowsGroup / numWarps) +
-                                    min(warpId + 1, rowsGroup % numWarps)) *
         APerWarp;
     int splitKStart =
         __builtin_mxc_readfirstlane(splitKId * (nChunksPerRow / splitK) +
@@ -239,13 +237,12 @@ template <typename Tax, typename Taccum, typename Ty, int BLOCK_DIM_X,
 __global__ void __launch_bounds__(BLOCK_DIM_X)
     MvSimtLayoutKernel(const Tax *A, const Tax *x, Ty *y, int spatialDim,
                        int reducedDim, Taccum alpha, Taccum beta,
-                       Ty *bias = nullptr) {
+                       Ty *bias = nullptr)
+    requires(BLOCK_DIM_X >= THREADS_PER_ROW)
+{
     constexpr int stages = 8;
     constexpr int elementsPerAccess = 8;
     constexpr int rowThreadsPerMma = 16;
-    constexpr int colThreadsPerMma = 4;
-    constexpr int elementsPerThreadPerMma = 4;
-    constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
 
     __shared__ UINT4
         shared_x[1024]; // Attention: just support k <= 8192 now !!!
@@ -254,15 +251,6 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
         shared_x[i] = reinterpret_cast<const UINT4 *>(x)[i];
     }
 
-    const int nChunksPerRow = reducedDim / rowThreadsPerMma / stages;
-
-    const int numWarps = (blockDim.x * gridDim.x) / WARP_SIZE;
-    const int warpId = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
-    const int laneId = threadIdx.x & (WARP_SIZE - 1);
-    // const int quarterWarpId = laneId >> 2;
-    // const int quarterLaneId = laneId & 15;
-
-    const int numWorkGroups = numWarps * WARP_SIZE / THREADS_PER_ROW;
     const int workGroupId = (blockIdx.x * blockDim.x) / THREADS_PER_ROW +
                             (threadIdx.x & (BLOCK_DIM_X / THREADS_PER_ROW - 1));
     const int workIdInGroup = threadIdx.x / (BLOCK_DIM_X / THREADS_PER_ROW);
@@ -429,30 +417,37 @@ void GemvMmaLayoutDispatch(const Tax *A, const Tax *x, Ty *y, int spatialDim,
 #define LAUNCH_GEMV_SIMT(ISBETAZERO, HASONEDIMBIAS, KernelParam1)              \
     auto cur_device = at::cuda::current_device();                              \
     const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if (ISBETAZERO) {                                                          \
-        if (HASONEDIMBIAS) {                                                   \
-            MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1,     \
-                               true, true>                                     \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta, bias);       \
+    if constexpr (BLOCK_DIM_X >= KernelParam1) {                               \
+        if (ISBETAZERO) {                                                      \
+            if (HASONEDIMBIAS) {                                               \
+                MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1, \
+                                   true, true>                                 \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta, bias);   \
+            } else {                                                           \
+                MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1, \
+                                   true, false>                                \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta, bias);   \
+            }                                                                  \
         } else {                                                               \
-            MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1,     \
-                               true, false>                                    \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta, bias);       \
+            if (HASONEDIMBIAS) {                                               \
+                MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1, \
+                                   false, true>                                \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta, bias);   \
+            } else {                                                           \
+                MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1, \
+                                   false, false>                               \
+                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
+                        A, x, y, spatialDim, reducedDim, alpha, beta, bias);   \
+            }                                                                  \
         }                                                                      \
     } else {                                                                   \
-        if (HASONEDIMBIAS) {                                                   \
-            MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1,     \
-                               false, true>                                    \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta, bias);       \
-        } else {                                                               \
-            MvSimtLayoutKernel<Tax, Taccum, Ty, BLOCK_DIM_X, KernelParam1,     \
-                               false, false>                                   \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta, bias);       \
-        }                                                                      \
+        throw std::runtime_error("KernelParam1 (" +                            \
+                                 std::to_string(KernelParam1) +                \
+                                 ") should be no greater than BLOCK_DIM_X (" + \
+                                 std::to_string(BLOCK_DIM_X) + ").");          \
     }
 
     if (KernelId == 1) {
@@ -584,6 +579,10 @@ void GemvMmaLayoutDispatch(const Tax *A, const Tax *x, Ty *y, int spatialDim,
             LAUNCH_GEMV_MMA(IsBetaZero, HasOneDimBias, 8, 7);
         } else if (KernelParam1 == 8 && KernelParam2 == 8) {
             LAUNCH_GEMV_MMA(IsBetaZero, HasOneDimBias, 8, 8);
+        } else {
+            throw std::runtime_error(
+                "Unsupported KernelParam1 " + std::to_string(KernelParam1) +
+                " and KernelParam2 " + std::to_string(KernelParam2));
         }
     } else if (KernelId == 2) {
         if (KernelParam1 == 1) {
@@ -608,6 +607,9 @@ void GemvMmaLayoutDispatch(const Tax *A, const Tax *x, Ty *y, int spatialDim,
             LAUNCH_GEMV_SIMT(IsBetaZero, HasOneDimBias, 512);
         } else if (KernelParam1 == 1024) {
             LAUNCH_GEMV_SIMT(IsBetaZero, HasOneDimBias, 1024);
+        } else {
+            throw std::runtime_error("Unsupported KernelParam1 " +
+                                     std::to_string(KernelParam1));
         }
     }
 

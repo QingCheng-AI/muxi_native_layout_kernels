@@ -26,8 +26,6 @@ void fused_experts_compute(W *experts_weights_matrix1,
     int max_num_m_blocks =
         (max_num_tokens_padded + micro_batchsize - 1) / micro_batchsize;
 
-    int padded_ptr_number = topK * batchsize;
-
     int block_dim_x =
         num_experts <= 8
             ? 64
@@ -104,8 +102,6 @@ void fused_experts_compute(W *experts_weights_matrix1,
         ((topK * batchsize) + num_experts * (micro_batchsize - 1));
     int max_num_m_blocks =
         (max_num_tokens_padded + micro_batchsize - 1) / micro_batchsize;
-
-    int padded_ptr_number = topK * batchsize;
 
     int block_dim_x =
         num_experts <= 8

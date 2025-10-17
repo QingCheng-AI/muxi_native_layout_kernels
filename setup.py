@@ -40,6 +40,9 @@ device_compile_flags = [
     "-metaxgpu-disable-bsm-offset=0",
     "-mllvm",
     "-metaxgpu-force-global-saddr=1",
+    "-Wall",
+    "-Wno-switch",  # No warnings from inside PyTorch
+    "-Werror",
     # "--res-usage",  # Please set `--verbose` to `pip install .` to see the message from `--res-usage`.
 ]
 if (gcc_version := find_gplusplus_version(version_high_bound=11)) is not None:

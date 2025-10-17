@@ -35,10 +35,6 @@ __device__ void GemmMmaLayoutABCReuseAKernel(Tab *A, Tab *B, Tc *C, int m,
         __builtin_mxc_readfirstlane(warpId * (rowsGroup / numWarps) +
                                     min(warpId, rowsGroup % numWarps)) *
         APerWarp;
-    int warpRowsGroupEnd =
-        __builtin_mxc_readfirstlane((warpId + 1) * (rowsGroup / numWarps) +
-                                    min(warpId + 1, rowsGroup % numWarps)) *
-        APerWarp;
     int numCycleA =
         __builtin_mxc_readfirstlane(k / (COLTHREADSPERMMA * ELEMENTSPERACCESS));
 
@@ -273,17 +269,9 @@ __device__ void
 GemmMmaLayoutABCReuseAKernelDispatch(Tab *A, Tab *B, Tc *C, int m, int n, int k,
                                      Taccum alpha, Taccum beta, Tc *dev_bias,
                                      int gemm_warpId) {
-    bool isBetaZero = (beta == static_cast<Taccum>(0));
-    bool hasOneDimBias = !(dev_bias == nullptr);
-
-#define LAUNCH_GEMM_OPT_KERNEL(IS_BETA_ZERO, HASONEDIMBIAS)                    \
-    GemmMmaLayoutABCReuseAKernel<Tab, Taccum, Tc, BLOCK_DIM_X, N, APerWarp,    \
-                                 splitN, splitK, true, false>(                 \
+    GemmMmaLayoutABCReuseAKernel<Tab, Taccum, Tc, BLOCK_DIM_X, N, APerWarp,
+                                 splitN, splitK, true, false>(
         A, B, C, m, n, k, alpha, beta, dev_bias, gemm_warpId);
-
-    LAUNCH_GEMM_OPT_KERNEL(isBetaZero, hasOneDimBias);
-
-#undef LAUNCH_GEMM_OPT_KERNEL
 }
 
 template <typename Tab, typename Taccum, typename Tc, int BLOCK_DIM_X, int N,
@@ -320,10 +308,6 @@ __device__ void GemmMmaLayoutAB_ContinuousCReuseA_and_mul_weights_Kernel(
     int warpRowsGroupBegin =
         __builtin_mxc_readfirstlane(warpId * (rowsGroup / numWarps) +
                                     min(warpId, rowsGroup % numWarps)) *
-        APerWarp;
-    int warpRowsGroupEnd =
-        __builtin_mxc_readfirstlane((warpId + 1) * (rowsGroup / numWarps) +
-                                    min(warpId + 1, rowsGroup % numWarps)) *
         APerWarp;
     int numCycleA =
         __builtin_mxc_readfirstlane(k / (colThreadsPerMma * elementsPerAccess));
@@ -578,15 +562,7 @@ __device__ void
 GemmMmaLayoutAB_ContinuousCReuseA_and_mul_weights_KernelDispatch(
     Tab *A, Tab *B, Tc *C, int m, int n, int k, Tc *alpha, Taccum beta,
     Tc *dev_bias, int gemm_warpId) {
-    bool isBetaZero = (beta == static_cast<Taccum>(0));
-    bool hasOneDimBias = !(dev_bias == nullptr);
-
-#define LAUNCH_GEMM_OPT_KERNEL(IS_BETA_ZERO, HASONEDIMBIAS)                    \
-    GemmMmaLayoutAB_ContinuousCReuseA_and_mul_weights_Kernel<                  \
-        Tab, Taccum, Tc, BLOCK_DIM_X, N, APerWarp, splitN, splitK, true,       \
-        false>(A, B, C, m, n, k, alpha, beta, dev_bias, gemm_warpId);
-
-    LAUNCH_GEMM_OPT_KERNEL(isBetaZero, hasOneDimBias);
-
-#undef LAUNCH_GEMM_OPT_KERNEL
+    GemmMmaLayoutAB_ContinuousCReuseA_and_mul_weights_Kernel<
+        Tab, Taccum, Tc, BLOCK_DIM_X, N, APerWarp, splitN, splitK, true, false>(
+        A, B, C, m, n, k, alpha, beta, dev_bias, gemm_warpId);
 }

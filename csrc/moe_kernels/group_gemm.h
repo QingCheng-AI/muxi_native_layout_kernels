@@ -41,7 +41,6 @@ void group_gemm_launcher(Tab *A[], Tab *B[], Tc *C[], int m, int n, int k,
                          Taccum alpha, Taccum beta, int gemm_count,
                          Tc *bias[] = nullptr) {
     constexpr int block_dim_x = 256;
-    bool malloc_bias = false;
     int *blockCountSum = (int *)malloc(sizeof(int) * (gemm_count + 1));
     blockCountSum[0] = 0;
 
@@ -194,7 +193,6 @@ void group_gemm_launcher2(Tab *A[], Tab *B[], Tc *C, int m, int n, int k,
                           Tc *dev_alpha, Taccum beta, int gemm_count,
                           Tc *bias[] = nullptr) {
     constexpr int block_dim_x = 256;
-    bool malloc_bias = false;
     int *blockCountSum = (int *)malloc(sizeof(int) * (gemm_count + 1));
     blockCountSum[0] = 0;
 
