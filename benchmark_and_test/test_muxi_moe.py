@@ -34,7 +34,8 @@ from muxi_layout_kernels.utils import fused_moe as iterative_moe
         272,
         384,
         512,
-        # 1024, # FIXME
+        1024,
+        2048,
     ],
 )  # batchSize
 @pytest.mark.parametrize(

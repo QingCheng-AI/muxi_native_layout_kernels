@@ -94,10 +94,6 @@ __global__ void moe_align_tokens_sorted_token_ids_kernel(
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
     const int stride = blockDim.x * gridDim.x;
 
-    for (int i = tid; i < max_num_tokens_padded; i += stride) {
-        sorted_token_ids[i] = topk_ids_numel;
-    }
-
     // for relaxed sorted token ids
     for (int i = tid; i < topk_ids_numel; i += stride) {
         int expert_id = topk_ids[i];

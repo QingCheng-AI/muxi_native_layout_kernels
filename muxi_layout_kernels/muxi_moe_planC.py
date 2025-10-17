@@ -85,8 +85,11 @@ def fused_moe(
     # print("begin experts compute")
     topK = topk_weights.size(1)
     max_num_tokens_padded = (topK * B) + e1 * (micro_batchsize - 1)
-    sorted_token_ids = torch.empty(
-        max_num_tokens_padded, dtype=torch.int32, device="cuda"
+    sorted_token_ids = torch.full(
+        (max_num_tokens_padded,),
+        fill_value=(B * topK),
+        dtype=torch.int32,
+        device="cuda",
     )
     cumsum_buffer = torch.empty(e1 + 1, dtype=torch.int32, device="cuda")
     padded_num_experts = torch.empty(1, dtype=torch.int32, device="cuda")
