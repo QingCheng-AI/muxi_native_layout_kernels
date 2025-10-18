@@ -43,8 +43,7 @@ from muxi_layout_kernels.utils import scale_whole_tensor
     "n,k,e",
     [
         (256, 7168, 256),  # DeepSeek-V3 TP8
-        (256, 7168, 128),  # Something else (TODO: Remove after we support things below)
-        # (768, 2048, 128),  # Qwen3-30B-A3B TP1 (FIXME)
+        (768, 2048, 128),  # Qwen3-30B-A3B TP1
     ],
 )
 @pytest.mark.parametrize("topk", [8])

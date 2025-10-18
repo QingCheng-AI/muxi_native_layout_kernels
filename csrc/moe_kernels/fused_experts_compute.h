@@ -66,7 +66,7 @@ void fused_experts_compute(W *experts_weights_matrix1,
             dev_experts_ids, m1, micro_batchsize, k1, 1.0f, topK,
             topK * batchsize, dev_padded_num_experts);
 
-    int silu_blockSize = nextPow2_bit(512 / 2 / ELEMENTSPERACCESS);
+    int silu_blockSize = nextPow2_bit(m1 / 2 / ELEMENTSPERACCESS);
     int silu_girdSize = batchsize * topK;
 
     silu_and_mul_kernel_block<A><<<silu_girdSize, silu_blockSize, 0, stream>>>(
@@ -145,7 +145,7 @@ void fused_experts_compute(W *experts_weights_matrix1,
             topK * batchsize, dev_padded_num_experts, w1_scale, w1_scale_m,
             w1_scale_n);
 
-    int silu_blockSize = nextPow2_bit(512 / 2 / ELEMENTSPERACCESS);
+    int silu_blockSize = nextPow2_bit(m1 / 2 / ELEMENTSPERACCESS);
     int silu_girdSize = batchsize * topK;
 
     silu_and_mul_kernel_block<A><<<silu_girdSize, silu_blockSize, 0, stream>>>(
