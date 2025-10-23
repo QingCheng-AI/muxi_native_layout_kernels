@@ -1,4 +1,6 @@
 #pragma once
+
+#include "../dispatch_utils.h"
 #include "group_gemm_utils.h"
 
 namespace fused_softmax_topk {
@@ -652,46 +654,24 @@ void fused_softmax_topk_dispatcher(const T *input, const int score_fun,
 
     dim3 block_dim(WARP_SIZE, BLOCK_SIZE / WARP_SIZE);
 
-#define LAUNCH_FUSED_TOPK(TOPK)                                                \
-    if (score_fun == 0) {                                                      \
-        fused_softmax_topk_kernel<T, VPT, EXPERTS, BLOCK_SIZE, BYTES_PER_LDG,  \
-                                  TOPK><<<numBlocks, block_dim, 0, stream>>>(  \
-            input, batchSize, n_groups, topK_groups, expertsIds,               \
-            selectedExpertsWeights, bias);                                     \
-    } else if (score_fun == 1) {                                               \
-        fused_sigmoid_topk_kernel<T, VPT, EXPERTS, BLOCK_SIZE, BYTES_PER_LDG,  \
-                                  TOPK><<<numBlocks, block_dim, 0, stream>>>(  \
-            input, batchSize, n_groups, topK_groups, expertsIds,               \
-            selectedExpertsWeights, bias);                                     \
-    }
-
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
-    switch (topK) {
-    // case 1:
-    //   LAUNCH_FUSED_TOPK(1);
-    //   break;
-    // case 2:
-    //   LAUNCH_FUSED_TOPK(2);
-    //   break;
-    // case 4:
-    //   LAUNCH_FUSED_TOPK(4);
-    //   break;
-    case 8:
-        LAUNCH_FUSED_TOPK(8);
-        break;
-
-    default:
-        assert(false &&
-               "Unsupported topK value, just 1, 2, 4, 8 are supported now.");
-        break;
-    }
-} // namespace fused_softmax_topk
-
-#define LAUNCH_SOFTMAX_TOPK(NUM_EXPERTS)                                       \
-    fused_softmax_topk_dispatcher<T, NUM_EXPERTS>(                             \
-        input, score_fun, batchSize, n_groups, topK_groups, expertsIds,        \
-        selectedExpertsWeights, topK, bias)
+    dispatchToStaticInts<8>(topK, [&]<int TOPK>() {
+        if (score_fun == 0) {
+            fused_softmax_topk_kernel<T, VPT, EXPERTS, BLOCK_SIZE,
+                                      BYTES_PER_LDG, TOPK>
+                <<<numBlocks, block_dim, 0, stream>>>(
+                    input, batchSize, n_groups, topK_groups, expertsIds,
+                    selectedExpertsWeights, bias);
+        } else if (score_fun == 1) {
+            fused_sigmoid_topk_kernel<T, VPT, EXPERTS, BLOCK_SIZE,
+                                      BYTES_PER_LDG, TOPK>
+                <<<numBlocks, block_dim, 0, stream>>>(
+                    input, batchSize, n_groups, topK_groups, expertsIds,
+                    selectedExpertsWeights, bias);
+        }
+    });
+}
 
 template <typename T>
 void fused_softmax_topk_launcher(const T *input, int score_fun,
@@ -700,41 +680,12 @@ void fused_softmax_topk_launcher(const T *input, int score_fun,
                                  T *selectedExpertsWeights, const int topK,
                                  const int numExperts,
                                  const T *bias = nullptr) {
-    switch (numExperts) {
-    // case 1:
-    //     LAUNCH_SOFTMAX_TOPK(1);
-    //     break;
-    // case 2:
-    //     LAUNCH_SOFTMAX_TOPK(2);
-    //     break;
-    // case 4:
-    //     LAUNCH_SOFTMAX_TOPK(4);
-    //     break;
-    case 8:
-        LAUNCH_SOFTMAX_TOPK(8);
-        break;
-    case 16:
-        LAUNCH_SOFTMAX_TOPK(16);
-        break;
-    case 32:
-        LAUNCH_SOFTMAX_TOPK(32);
-        break;
-    case 64:
-        LAUNCH_SOFTMAX_TOPK(64);
-        break;
-    case 128:
-        LAUNCH_SOFTMAX_TOPK(128);
-        break;
-    case 256:
-        LAUNCH_SOFTMAX_TOPK(256);
-        break;
-
-    default:
-        assert(
-            false &&
-            "fused_softmax_topK num_experts must be a power of 2 and <= 256.");
-        break;
-    }
+    dispatchToStaticInts<8, 16, 32, 64, 128, 256>(
+        numExperts, [&]<int NUM_EXPERTS>() {
+            fused_softmax_topk_dispatcher<T, NUM_EXPERTS>(
+                input, score_fun, batchSize, n_groups, topK_groups, expertsIds,
+                selectedExpertsWeights, topK, bias);
+        });
 }
 
 } // namespace fused_softmax_topk

@@ -6,6 +6,7 @@
 #include <type_traits>
 
 #include "arg_selector.h"
+#include "dispatch_utils.h"
 #include "gemm_layout_A.h"
 #include "utils.cuh"
 
@@ -652,78 +653,15 @@ void GemmMmaJustLayoutAKernelDispatch(Tab *A, Tab *B, Tc *C, int m, int n,
                                       int k, Taccum alpha, Taccum beta,
                                       Tc *dev_bias, int APerWarp, int splitN,
                                       int splitK) {
-#define LAUNCH_GEMM_OPTS(APERWARP, SPLITN, SPLITK)                             \
-    GemmMmaJustLayoutAKernelDispatchN<Tab, Taccum, Tc, APERWARP, SPLITN,       \
-                                      SPLITK>(A, B, C, m, n, k, alpha, beta,   \
-                                              dev_bias);
-
-    if (APerWarp == 1 && splitN == 1 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(1, 1, 1);
-    } else if (APerWarp == 1 && splitN == 1 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(1, 1, 2);
-    } else if (APerWarp == 1 && splitN == 1 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(1, 1, 3);
-    } else if (APerWarp == 1 && splitN == 1 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(1, 1, 4);
-    } else if (APerWarp == 1 && splitN == 2 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(1, 2, 1);
-    } else if (APerWarp == 1 && splitN == 2 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(1, 2, 2);
-    } else if (APerWarp == 1 && splitN == 2 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(1, 2, 3);
-    } else if (APerWarp == 1 && splitN == 2 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(1, 2, 4);
-    } else if (APerWarp == 1 && splitN == 3 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(1, 3, 1);
-    } else if (APerWarp == 1 && splitN == 3 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(1, 3, 2);
-    } else if (APerWarp == 1 && splitN == 3 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(1, 3, 3);
-    } else if (APerWarp == 1 && splitN == 3 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(1, 3, 4);
-    } else if (APerWarp == 1 && splitN == 4 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(1, 4, 1);
-    } else if (APerWarp == 1 && splitN == 4 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(1, 4, 2);
-    } else if (APerWarp == 1 && splitN == 4 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(1, 4, 3);
-    } else if (APerWarp == 1 && splitN == 4 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(1, 4, 4);
-    } else if (APerWarp == 2 && splitN == 1 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(2, 1, 1);
-    } else if (APerWarp == 2 && splitN == 1 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(2, 1, 2);
-    } else if (APerWarp == 2 && splitN == 1 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(2, 1, 3);
-    } else if (APerWarp == 2 && splitN == 1 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(2, 1, 4);
-    } else if (APerWarp == 2 && splitN == 2 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(2, 2, 1);
-    } else if (APerWarp == 2 && splitN == 2 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(2, 2, 2);
-    } else if (APerWarp == 2 && splitN == 2 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(2, 2, 3);
-    } else if (APerWarp == 2 && splitN == 2 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(2, 2, 4);
-    } else if (APerWarp == 2 && splitN == 3 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(2, 3, 1);
-    } else if (APerWarp == 2 && splitN == 3 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(2, 3, 2);
-    } else if (APerWarp == 2 && splitN == 3 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(2, 3, 3);
-    } else if (APerWarp == 2 && splitN == 3 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(2, 3, 4);
-    } else if (APerWarp == 2 && splitN == 4 && splitK == 1) {
-        LAUNCH_GEMM_OPTS(2, 4, 1);
-    } else if (APerWarp == 2 && splitN == 4 && splitK == 2) {
-        LAUNCH_GEMM_OPTS(2, 4, 2);
-    } else if (APerWarp == 2 && splitN == 4 && splitK == 3) {
-        LAUNCH_GEMM_OPTS(2, 4, 3);
-    } else if (APerWarp == 2 && splitN == 4 && splitK == 4) {
-        LAUNCH_GEMM_OPTS(2, 4, 4);
-    }
-
-#undef LAUNCH_GEMM_OPTS
+    dispatchToStaticInts<1, 2>(APerWarp, [&]<int APERWARP>() {
+        dispatchToStaticInts<1, 2, 3, 4>(splitN, [&]<int SPLITN>() {
+            dispatchToStaticInts<1, 2, 3, 4>(splitK, [&]<int SPLITK>() {
+                GemmMmaJustLayoutAKernelDispatchN<Tab, Taccum, Tc, APERWARP,
+                                                  SPLITN, SPLITK>(
+                    A, B, C, m, n, k, alpha, beta, dev_bias);
+            });
+        });
+    });
 }
 
 template <typename Tab, typename Taccum, typename Tc>
@@ -736,70 +674,45 @@ void GemmMmaJustLayoutAKernelDispatch2(Tab *A, Tab *B, Tc *C, int m, int n,
     bool hasOneDimBias = !(dev_bias == nullptr);
     dim3 gridSize((m + tile_m - 1) / tile_m, (n + tile_n - 1) / tile_n);
 
-#define LAUNCH_GEMM_LAYOUTA2(tile_m, tile_n, tile_k, IS_BETA_ZERO,             \
-                             HASONEDIMBIAS)                                    \
-    auto cur_device = at::cuda::current_device();                              \
-    const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if (IS_BETA_ZERO) {                                                        \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x, tile_m,    \
-                                      tile_n, tile_k, true, true>              \
-                <<<gridSize, block_dim_x, 0, stream>>>(A, B, C, m, n, k,       \
-                                                       alpha, beta, dev_bias); \
-        } else {                                                               \
-            GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x, tile_m,    \
-                                      tile_n, tile_k, true, false>             \
-                <<<gridSize, block_dim_x, 0, stream>>>(A, B, C, m, n, k,       \
-                                                       alpha, beta, dev_bias); \
-        }                                                                      \
-    } else {                                                                   \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x, tile_m,    \
-                                      tile_n, tile_k, false, true>             \
-                <<<gridSize, block_dim_x, 0, stream>>>(A, B, C, m, n, k,       \
-                                                       alpha, beta, dev_bias); \
-        } else {                                                               \
-            GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x, tile_m,    \
-                                      tile_n, tile_k, false, false>            \
-                <<<gridSize, block_dim_x, 0, stream>>>(A, B, C, m, n, k,       \
-                                                       alpha, beta, dev_bias); \
-        }                                                                      \
-    }
-    if (tile_m == 128 && tile_n == 16 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 16, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 128 && tile_n == 32 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 32, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 128 && tile_n == 48 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 48, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 128 && tile_n == 64 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 64, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 128 && tile_n == 80 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 80, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 128 && tile_n == 96 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 96, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 128 && tile_n == 112 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 112, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 128 && tile_n == 128 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(128, 128, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 16 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 16, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 32 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 32, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 48 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 48, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 64 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 64, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 80 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 80, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 96 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 96, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 112 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 112, 128, isBetaZero, hasOneDimBias);
-    } else if (tile_m == 64 && tile_n == 128 && tile_k == 128) {
-        LAUNCH_GEMM_LAYOUTA2(64, 128, 128, isBetaZero, hasOneDimBias);
-    }
-
-#undef LAUNCH_GEMM_LAYOUTA2
+    dispatchToStaticInts<64, 128>(tile_m, [&]<int tile_m>() {
+        dispatchToStaticInts<16, 32, 48, 64, 80, 96, 112,
+                             128>(tile_n, [&]<int tile_n>() {
+            dispatchToStaticInts<128>(tile_k, [&]<int tile_k>() {
+                auto cur_device = at::cuda::current_device();
+                const mcStream_t stream =
+                    at::cuda::getCurrentCUDAStream(cur_device);
+                if (isBetaZero) {
+                    if (hasOneDimBias) {
+                        GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x,
+                                                  tile_m, tile_n, tile_k, true,
+                                                  true>
+                            <<<gridSize, block_dim_x, 0, stream>>>(
+                                A, B, C, m, n, k, alpha, beta, dev_bias);
+                    } else {
+                        GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x,
+                                                  tile_m, tile_n, tile_k, true,
+                                                  false>
+                            <<<gridSize, block_dim_x, 0, stream>>>(
+                                A, B, C, m, n, k, alpha, beta, dev_bias);
+                    }
+                } else {
+                    if (hasOneDimBias) {
+                        GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x,
+                                                  tile_m, tile_n, tile_k, false,
+                                                  true>
+                            <<<gridSize, block_dim_x, 0, stream>>>(
+                                A, B, C, m, n, k, alpha, beta, dev_bias);
+                    } else {
+                        GemmMmaJustLayoutAKernel2<Tab, Taccum, Tc, block_dim_x,
+                                                  tile_m, tile_n, tile_k, false,
+                                                  false>
+                            <<<gridSize, block_dim_x, 0, stream>>>(
+                                A, B, C, m, n, k, alpha, beta, dev_bias);
+                    }
+                }
+            });
+        });
+    });
 }
 
 torch::Tensor gemm_layoutA_wapper(torch::Tensor A, torch::Tensor B, int m,

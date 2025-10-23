@@ -6,6 +6,7 @@
 #include <mc_runtime.h>
 
 #include "arg_selector.h"
+#include "dispatch_utils.h"
 #include "gemv_layout_a.h"
 #include "layout_gemv_kernel.cuh"
 #include "layout_gemv_kernel_soft_fp8.cuh"
@@ -26,60 +27,48 @@ torch::Tensor gemv_layoutA_wapper(torch::Tensor A, torch::Tensor B, int m,
         C = torch::empty({1, m}, B.options());
     }
 
-#define GEMV_KERNEL_LAUNCH(blockDimX)                                          \
-    if (A.dtype() == torch::kFloat16) {                                        \
-        GemvMmaLayoutDispatch<__half, float, __half, blockDimX>(               \
-            reinterpret_cast<__half *>(A.data_ptr<at::Half>()),                \
-            reinterpret_cast<__half *>(B.data_ptr<at::Half>()),                \
-            reinterpret_cast<__half *>(C.data_ptr<at::Half>()), m, k, alpha,   \
-            beta,                                                              \
-            bias == std::nullopt                                               \
-                ? nullptr                                                      \
-                : reinterpret_cast<__half *>(bias->data_ptr<at::Half>()),      \
-            kernelId, kernelParam1, kernelParam2);                             \
-    } else if (A.dtype() == torch::kBFloat16) {                                \
-        GemvMmaLayoutDispatch<__maca_bfloat16, float, __maca_bfloat16,         \
-                              blockDimX>(                                      \
-            reinterpret_cast<__maca_bfloat16 *>(A.data_ptr<at::BFloat16>()),   \
-            reinterpret_cast<__maca_bfloat16 *>(B.data_ptr<at::BFloat16>()),   \
-            reinterpret_cast<__maca_bfloat16 *>(C.data_ptr<at::BFloat16>()),   \
-            m, k, alpha, beta,                                                 \
-            bias == std::nullopt ? nullptr                                     \
-                                 : reinterpret_cast<__maca_bfloat16 *>(        \
-                                       bias->data_ptr<at::BFloat16>()),        \
-            kernelId, kernelParam1, kernelParam2);                             \
-    } else if (A.element_size() == 1 && B.dtype() == torch::kBFloat16) {       \
-        GemvMmaLayoutDispatchSoftFp8<uint8_t, maca_bfloat16, float,            \
-                                     maca_bfloat16, blockDimX>(                \
-            reinterpret_cast<uint8_t *>(A.data_ptr()),                         \
-            reinterpret_cast<__maca_bfloat16 *>(B.data_ptr<at::BFloat16>()),   \
-            reinterpret_cast<__maca_bfloat16 *>(C.data_ptr<at::BFloat16>()),   \
-            m, k, alpha, beta,                                                 \
-            reinterpret_cast<float *>(scale_matrix->data_ptr()),               \
-            bias == std::nullopt ? nullptr                                     \
-                                 : reinterpret_cast<__maca_bfloat16 *>(        \
-                                       bias->data_ptr<at::BFloat16>()),        \
-            kernelId, kernelParam1, kernelParam2);                             \
-    } else {                                                                   \
-        TORCH_CHECK(false, "Unsupported data type");                           \
-    }
-
-    if (blockDimX == 64) {
-        GEMV_KERNEL_LAUNCH(64);
-    } else if (blockDimX == 128) {
-        GEMV_KERNEL_LAUNCH(128);
-    } else if (blockDimX == 256) {
-        GEMV_KERNEL_LAUNCH(256);
-    } else if (blockDimX == 512) {
-        GEMV_KERNEL_LAUNCH(512);
-    } else if (blockDimX == 1024) {
-        GEMV_KERNEL_LAUNCH(1024);
-    }
-
-#undef GEMV_KERNEL_LAUNCH
+    dispatchToStaticInts<64, 128, 256, 512,
+                         1024>(blockDimX, [&]<int blockDimX>() {
+        if (A.dtype() == torch::kFloat16) {
+            GemvMmaLayoutDispatch<__half, float, __half, blockDimX>(
+                reinterpret_cast<__half *>(A.data_ptr<at::Half>()),
+                reinterpret_cast<__half *>(B.data_ptr<at::Half>()),
+                reinterpret_cast<__half *>(C.data_ptr<at::Half>()), m, k, alpha,
+                beta,
+                bias == std::nullopt
+                    ? nullptr
+                    : reinterpret_cast<__half *>(bias->data_ptr<at::Half>()),
+                kernelId, kernelParam1, kernelParam2);
+        } else if (A.dtype() == torch::kBFloat16) {
+            GemvMmaLayoutDispatch<__maca_bfloat16, float, __maca_bfloat16,
+                                  blockDimX>(
+                reinterpret_cast<__maca_bfloat16 *>(A.data_ptr<at::BFloat16>()),
+                reinterpret_cast<__maca_bfloat16 *>(B.data_ptr<at::BFloat16>()),
+                reinterpret_cast<__maca_bfloat16 *>(C.data_ptr<at::BFloat16>()),
+                m, k, alpha, beta,
+                bias == std::nullopt ? nullptr
+                                     : reinterpret_cast<__maca_bfloat16 *>(
+                                           bias->data_ptr<at::BFloat16>()),
+                kernelId, kernelParam1, kernelParam2);
+        } else if (A.element_size() == 1 && B.dtype() == torch::kBFloat16) {
+            GemvMmaLayoutDispatchSoftFp8<uint8_t, maca_bfloat16, float,
+                                         maca_bfloat16, blockDimX>(
+                reinterpret_cast<uint8_t *>(A.data_ptr()),
+                reinterpret_cast<__maca_bfloat16 *>(B.data_ptr<at::BFloat16>()),
+                reinterpret_cast<__maca_bfloat16 *>(C.data_ptr<at::BFloat16>()),
+                m, k, alpha, beta,
+                reinterpret_cast<float *>(scale_matrix->data_ptr()),
+                bias == std::nullopt ? nullptr
+                                     : reinterpret_cast<__maca_bfloat16 *>(
+                                           bias->data_ptr<at::BFloat16>()),
+                kernelId, kernelParam1, kernelParam2);
+        } else {
+            TORCH_CHECK(false, "Unsupported data type");
+        }
+    });
 
     return C;
-} // namespace muxi_layout_kernels
+}
 
 torch::Tensor gemv_layoutA(torch::Tensor A, torch::Tensor B, float alpha,
                            float beta,

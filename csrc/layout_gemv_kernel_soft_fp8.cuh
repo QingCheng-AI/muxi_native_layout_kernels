@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "dispatch_utils.h"
 #include "utils.cuh"
 
 namespace muxi_layout_kernels {
@@ -510,263 +511,103 @@ void GemvMmaLayoutDispatchSoftFp8(const Ta *A, const Tx *x, Ty *y,
                                   int KernelParam1 = 1, int KernelParam2 = 1) {
     bool IsBetaZero = (beta == static_cast<Taccum>(0));
     bool HasOneDimBias = !(bias == nullptr);
-    int NUM_BLOCKS;
     if (KernelId == 1) {
-        NUM_BLOCKS = (((spatialDim / 16) +
-                       (BLOCK_DIM_X / WARP_SIZE * KernelParam1) - 1) /
-                      (BLOCK_DIM_X / WARP_SIZE * KernelParam1)) *
-                     KernelParam2;
+        int NUM_BLOCKS = (((spatialDim / 16) +
+                           (BLOCK_DIM_X / WARP_SIZE * KernelParam1) - 1) /
+                          (BLOCK_DIM_X / WARP_SIZE * KernelParam1)) *
+                         KernelParam2;
+        dispatchToStaticInts<1, 2, 3, 4, 5, 6, 7,
+                             8>(KernelParam1, [&]<int KernelParam1>() {
+            dispatchToStaticInts<1, 2, 3, 4, 5, 6, 7,
+                                 8>(KernelParam2, [&]<int KernelParam2>() {
+                auto cur_device = at::cuda::current_device();
+                const mcStream_t stream =
+                    at::cuda::getCurrentCUDAStream(cur_device);
+                if (IsBetaZero) {
+                    if (HasOneDimBias) {
+                        MvMmaLayoutKernelSoftFp8<
+                            Ta, Tx, Taccum, Ty, BLOCK_DIM_X, KernelParam1,
+                            KernelParam2, scaleBlockM, scaleBlockK, true, true>
+                            <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                A, x, y, spatialDim, reducedDim, alpha, beta,
+                                scale_matrix, bias);
+                    } else {
+                        MvMmaLayoutKernelSoftFp8<
+                            Ta, Tx, Taccum, Ty, BLOCK_DIM_X, KernelParam1,
+                            KernelParam2, scaleBlockM, scaleBlockK, true, false>
+                            <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                A, x, y, spatialDim, reducedDim, alpha, beta,
+                                scale_matrix, bias);
+                    }
+                } else {
+                    if (HasOneDimBias) {
+                        MvMmaLayoutKernelSoftFp8<
+                            Ta, Tx, Taccum, Ty, BLOCK_DIM_X, KernelParam1,
+                            KernelParam2, scaleBlockM, scaleBlockK, false, true>
+                            <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                A, x, y, spatialDim, reducedDim, alpha, beta,
+                                scale_matrix, bias);
+                    } else {
+                        MvMmaLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty,
+                                                 BLOCK_DIM_X, KernelParam1,
+                                                 KernelParam2, scaleBlockM,
+                                                 scaleBlockK, false, false>
+                            <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                A, x, y, spatialDim, reducedDim, alpha, beta,
+                                scale_matrix, bias);
+                    }
+                }
+            });
+        });
     } else if (KernelId == 2) {
-        NUM_BLOCKS = spatialDim / (BLOCK_DIM_X / KernelParam1);
+        int NUM_BLOCKS = spatialDim / (BLOCK_DIM_X / KernelParam1);
+        dispatchToStaticInts<1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024>(
+            KernelParam1, [&]<int KernelParam1>() {
+                auto cur_device = at::cuda::current_device();
+                const mcStream_t stream =
+                    at::cuda::getCurrentCUDAStream(cur_device);
+                if constexpr (BLOCK_DIM_X >= KernelParam1) {
+                    if (IsBetaZero) {
+                        if (HasOneDimBias) {
+                            MvSimtLayoutKernelSoftFp8<
+                                Ta, Tx, Taccum, Ty, BLOCK_DIM_X, KernelParam1,
+                                scaleBlockM, scaleBlockK, true, true>
+                                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                    A, x, y, spatialDim, reducedDim, alpha,
+                                    beta, scale_matrix, bias);
+                        } else {
+                            MvSimtLayoutKernelSoftFp8<
+                                Ta, Tx, Taccum, Ty, BLOCK_DIM_X, KernelParam1,
+                                scaleBlockM, scaleBlockK, true, false>
+                                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                    A, x, y, spatialDim, reducedDim, alpha,
+                                    beta, scale_matrix, bias);
+                        }
+                    } else {
+                        if (HasOneDimBias) {
+                            MvSimtLayoutKernelSoftFp8<
+                                Ta, Tx, Taccum, Ty, BLOCK_DIM_X, KernelParam1,
+                                scaleBlockM, scaleBlockK, false, true>
+                                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                    A, x, y, spatialDim, reducedDim, alpha,
+                                    beta, scale_matrix, bias);
+                        } else {
+                            MvSimtLayoutKernelSoftFp8<
+                                Ta, Tx, Taccum, Ty, BLOCK_DIM_X, KernelParam1,
+                                scaleBlockM, scaleBlockK, false, false>
+                                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(
+                                    A, x, y, spatialDim, reducedDim, alpha,
+                                    beta, scale_matrix, bias);
+                        }
+                    }
+                } else {
+                    throw std::runtime_error(
+                        "KernelParam1 (" + std::to_string(KernelParam1) +
+                        ") should be no greater than BLOCK_DIM_X (" +
+                        std::to_string(BLOCK_DIM_X) + ").");
+                }
+            });
     }
-
-#define LAUNCH_GEMV_MMA_SOFT_FP8(ISBETAZERO, HASONEDIMBIAS, KernelParam1,      \
-                                 KernelParam2)                                 \
-    auto cur_device = at::cuda::current_device();                              \
-    const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if (ISBETAZERO) {                                                          \
-        if (HASONEDIMBIAS) {                                                   \
-            MvMmaLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,          \
-                                     KernelParam1, KernelParam2, scaleBlockM,  \
-                                     scaleBlockK, true, true>                  \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
-        } else {                                                               \
-            MvMmaLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,          \
-                                     KernelParam1, KernelParam2, scaleBlockM,  \
-                                     scaleBlockK, true, false>                 \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
-        }                                                                      \
-    } else {                                                                   \
-        if (HASONEDIMBIAS) {                                                   \
-            MvMmaLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,          \
-                                     KernelParam1, KernelParam2, scaleBlockM,  \
-                                     scaleBlockK, false, true>                 \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
-        } else {                                                               \
-            MvMmaLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,          \
-                                     KernelParam1, KernelParam2, scaleBlockM,  \
-                                     scaleBlockK, false, false>                \
-                <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                      \
-                    A, x, y, spatialDim, reducedDim, alpha, beta,              \
-                    scale_matrix, bias);                                       \
-        }                                                                      \
-    }
-
-#define LAUNCH_GEMV_SIMT_SOFT_FP8(ISBETAZERO, HASONEDIMBIAS, KernelParam1)     \
-    auto cur_device = at::cuda::current_device();                              \
-    const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if constexpr (BLOCK_DIM_X >= KernelParam1) {                               \
-        if (ISBETAZERO) {                                                      \
-            if (HASONEDIMBIAS) {                                               \
-                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
-                                          KernelParam1, scaleBlockM,           \
-                                          scaleBlockK, true, true>             \
-                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
-                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
-                        scale_matrix, bias);                                   \
-            } else {                                                           \
-                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
-                                          KernelParam1, scaleBlockM,           \
-                                          scaleBlockK, true, false>            \
-                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
-                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
-                        scale_matrix, bias);                                   \
-            }                                                                  \
-        } else {                                                               \
-            if (HASONEDIMBIAS) {                                               \
-                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
-                                          KernelParam1, scaleBlockM,           \
-                                          scaleBlockK, false, true>            \
-                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
-                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
-                        scale_matrix, bias);                                   \
-            } else {                                                           \
-                MvSimtLayoutKernelSoftFp8<Ta, Tx, Taccum, Ty, BLOCK_DIM_X,     \
-                                          KernelParam1, scaleBlockM,           \
-                                          scaleBlockK, false, false>           \
-                    <<<NUM_BLOCKS, BLOCK_DIM_X, 0, stream>>>(                  \
-                        A, x, y, spatialDim, reducedDim, alpha, beta,          \
-                        scale_matrix, bias);                                   \
-            }                                                                  \
-        }                                                                      \
-    } else {                                                                   \
-        throw std::runtime_error("KernelParam1 (" +                            \
-                                 std::to_string(KernelParam1) +                \
-                                 ") should be no greater than BLOCK_DIM_X (" + \
-                                 std::to_string(BLOCK_DIM_X) + ").");          \
-    }
-
-    if (KernelId == 1) {
-        if (KernelParam1 == 1 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 1);
-        } else if (KernelParam1 == 1 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 2);
-        } else if (KernelParam1 == 1 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 3);
-        } else if (KernelParam1 == 1 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 4);
-        } else if (KernelParam1 == 1 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 5);
-        } else if (KernelParam1 == 1 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 6);
-        } else if (KernelParam1 == 1 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 7);
-        } else if (KernelParam1 == 1 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 1, 8);
-        } else if (KernelParam1 == 2 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 1);
-        } else if (KernelParam1 == 2 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 2);
-        } else if (KernelParam1 == 2 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 3);
-        } else if (KernelParam1 == 2 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 4);
-        } else if (KernelParam1 == 2 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 5);
-        } else if (KernelParam1 == 2 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 6);
-        } else if (KernelParam1 == 2 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 7);
-        } else if (KernelParam1 == 2 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 2, 8);
-        } else if (KernelParam1 == 3 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 1);
-        } else if (KernelParam1 == 3 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 2);
-        } else if (KernelParam1 == 3 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 3);
-        } else if (KernelParam1 == 3 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 4);
-        } else if (KernelParam1 == 3 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 5);
-        } else if (KernelParam1 == 3 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 6);
-        } else if (KernelParam1 == 3 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 7);
-        } else if (KernelParam1 == 3 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 3, 8);
-        } else if (KernelParam1 == 4 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 1);
-        } else if (KernelParam1 == 4 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 2);
-        } else if (KernelParam1 == 4 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 3);
-        } else if (KernelParam1 == 4 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 4);
-        } else if (KernelParam1 == 4 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 5);
-        } else if (KernelParam1 == 4 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 6);
-        } else if (KernelParam1 == 4 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 7);
-        } else if (KernelParam1 == 4 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 4, 8);
-        } else if (KernelParam1 == 5 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 1);
-        } else if (KernelParam1 == 5 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 2);
-        } else if (KernelParam1 == 5 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 3);
-        } else if (KernelParam1 == 5 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 4);
-        } else if (KernelParam1 == 5 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 5);
-        } else if (KernelParam1 == 5 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 6);
-        } else if (KernelParam1 == 5 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 7);
-        } else if (KernelParam1 == 5 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 5, 8);
-        } else if (KernelParam1 == 6 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 1);
-        } else if (KernelParam1 == 6 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 2);
-        } else if (KernelParam1 == 6 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 3);
-        } else if (KernelParam1 == 6 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 4);
-        } else if (KernelParam1 == 6 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 5);
-        } else if (KernelParam1 == 6 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 6);
-        } else if (KernelParam1 == 6 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 7);
-        } else if (KernelParam1 == 6 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 6, 8);
-        } else if (KernelParam1 == 7 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 1);
-        } else if (KernelParam1 == 7 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 2);
-        } else if (KernelParam1 == 7 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 3);
-        } else if (KernelParam1 == 7 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 4);
-        } else if (KernelParam1 == 7 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 5);
-        } else if (KernelParam1 == 7 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 6);
-        } else if (KernelParam1 == 7 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 7);
-        } else if (KernelParam1 == 7 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 7, 8);
-        } else if (KernelParam1 == 8 && KernelParam2 == 1) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 1);
-        } else if (KernelParam1 == 8 && KernelParam2 == 2) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 2);
-        } else if (KernelParam1 == 8 && KernelParam2 == 3) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 3);
-        } else if (KernelParam1 == 8 && KernelParam2 == 4) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 4);
-        } else if (KernelParam1 == 8 && KernelParam2 == 5) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 5);
-        } else if (KernelParam1 == 8 && KernelParam2 == 6) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 6);
-        } else if (KernelParam1 == 8 && KernelParam2 == 7) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 7);
-        } else if (KernelParam1 == 8 && KernelParam2 == 8) {
-            LAUNCH_GEMV_MMA_SOFT_FP8(IsBetaZero, HasOneDimBias, 8, 8);
-        } else {
-            throw std::runtime_error(
-                "Unsupported KernelParam1 " + std::to_string(KernelParam1) +
-                " and KernelParam2 " + std::to_string(KernelParam2));
-        }
-    } else if (KernelId == 2) {
-        if (KernelParam1 == 1) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 1);
-        } else if (KernelParam1 == 2) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 2);
-        } else if (KernelParam1 == 4) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 4);
-        } else if (KernelParam1 == 8) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 8);
-        } else if (KernelParam1 == 16) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 16);
-        } else if (KernelParam1 == 32) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 32);
-        } else if (KernelParam1 == 64) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 64);
-        } else if (KernelParam1 == 128) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 128);
-        } else if (KernelParam1 == 256) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 256);
-        } else if (KernelParam1 == 512) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 512);
-        } else if (KernelParam1 == 1024) {
-            LAUNCH_GEMV_SIMT_SOFT_FP8(IsBetaZero, HasOneDimBias, 1024);
-        } else {
-            throw std::runtime_error("Unsupported KernelParam1 " +
-                                     std::to_string(KernelParam1));
-        }
-    }
-
-#undef LAUNCH_GEMV_MMA_SOFT_FP8
-#undef LAUNCH_GEMV_SIMT_SOFT_FP8
 }
 
 } // namespace muxi_layout_kernels
