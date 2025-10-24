@@ -17,6 +17,27 @@ bool dispatchToStaticIntsInner(int val, auto &&lambda) {
     }
 }
 
+template <int ONLY_ORDERED_VAL>
+void dispatchToNextIntInStaticOrderedIntsInner(int val, auto &&lambda) {
+    if (val <= ONLY_ORDERED_VAL) {
+        lambda.template operator()<ONLY_ORDERED_VAL>();
+    } else {
+        throw std::runtime_error(
+            "Invalid value passed to dispatchToStaticInts: " +
+            std::to_string(val) +
+            ", should be <=" + std::to_string(ONLY_ORDERED_VAL));
+    }
+}
+
+template <int FIRST_ORDERED_VAL, int... OTHER_ORDERED_VALS>
+void dispatchToNextIntInStaticOrderedIntsInner(int val, auto &&lambda) {
+    if (val <= FIRST_ORDERED_VAL) {
+        lambda.template operator()<FIRST_ORDERED_VAL>();
+    } else {
+        dispatchToStaticIntsInner<OTHER_ORDERED_VALS...>(val, lambda);
+    }
+}
+
 } // namespace detail
 
 /**
@@ -25,6 +46,10 @@ bool dispatchToStaticIntsInner(int val, auto &&lambda) {
  * Given an run-time integer and a template lambda accepting this integer as a
  * compile-time constant as its first template argument, dispatch to the correct
  * implementation of the lambda.
+ *
+ * Suppose the candidates are 10, 20, 30 and the runtime value is 20, then the
+ * lambda will be called with the template argument 20. An exception will be
+ * thrown if the runtime value is not one of the candidates.
  */
 template <int... POSSIBLE_VALS>
 void dispatchToStaticInts(int val, auto &&lambda) {
@@ -37,4 +62,21 @@ void dispatchToStaticInts(int val, auto &&lambda) {
         ((oss << POSSIBLE_VALS << ", "), ...);
         throw std::runtime_error(oss.str());
     }
+}
+
+/**
+ * Dispatch to the next value in an ordered set of integers as a template
+ * argument.
+ *
+ * Given a run-time integer and a template lambda accepting this integer as a
+ * compile-time constant as its first template argument, dispatch to the correct
+ * implementation of the lambda.
+ *
+ * Suppose the candidates are 10, 20, 30 and the runtime value is 15, then the
+ * lambda will be called with the template argument 20.
+ */
+template <int... ORDERED_VALS>
+void dispatchToNextIntInStaticOrderedInts(int val, auto &&lambda) {
+    detail::dispatchToNextIntInStaticOrderedIntsInner<ORDERED_VALS...>(val,
+                                                                       lambda);
 }

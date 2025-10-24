@@ -806,82 +806,51 @@ void GemmMmaLayoutAB_ContinuousCReuseAKernelDispatchN(Tab *A, Tab *B, Tc *C,
     bool isBetaZero = (beta == static_cast<Taccum>(0));
     bool hasOneDimBias = !(dev_bias == nullptr);
 
-#define LAUNCH_GEMM_OPT_KERNEL(N, IS_BETA_ZERO, HASONEDIMBIAS)                 \
-    auto cur_device = at::cuda::current_device();                              \
-    const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if (IS_BETA_ZERO) {                                                        \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaLayoutAB_ContinuousCReuseAKernel<                           \
-                Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN, splitK,     \
-                true, true><<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * \
-                               splitN * splitK),                               \
-                              block_dim_x, 0, stream>>>(                       \
-                A, B, C, m, n, k, alpha, beta, dev_bias);                      \
-        } else {                                                               \
-            GemmMmaLayoutAB_ContinuousCReuseAKernel<                           \
-                Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN, splitK,     \
-                true, false>                                                   \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *   \
-                    splitK),                                                   \
-                   block_dim_x, 0, stream>>>(A, B, C, m, n, k, alpha, beta,    \
-                                             dev_bias);                        \
-        }                                                                      \
-    } else {                                                                   \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaLayoutAB_ContinuousCReuseAKernel<                           \
-                Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN, splitK,     \
-                false, true>                                                   \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *   \
-                    splitK),                                                   \
-                   block_dim_x, 0, stream>>>(A, B, C, m, n, k, alpha, beta,    \
-                                             dev_bias);                        \
-        } else {                                                               \
-            GemmMmaLayoutAB_ContinuousCReuseAKernel<                           \
-                Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN, splitK,     \
-                false, false>                                                  \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *   \
-                    splitK),                                                   \
-                   block_dim_x, 0, stream>>>(A, B, C, m, n, k, alpha, beta,    \
-                                             dev_bias);                        \
-        }                                                                      \
-    }
-
-    if (n <= 16) {
-        LAUNCH_GEMM_OPT_KERNEL(16, isBetaZero, hasOneDimBias);
-    } else if (n <= 32) {
-        LAUNCH_GEMM_OPT_KERNEL(32, isBetaZero, hasOneDimBias);
-    } else if (n <= 48) {
-        LAUNCH_GEMM_OPT_KERNEL(48, isBetaZero, hasOneDimBias);
-    } else if (n <= 64) {
-        LAUNCH_GEMM_OPT_KERNEL(64, isBetaZero, hasOneDimBias);
-    } else if (n <= 80) {
-        LAUNCH_GEMM_OPT_KERNEL(80, isBetaZero, hasOneDimBias);
-    } else if (n <= 96) {
-        LAUNCH_GEMM_OPT_KERNEL(96, isBetaZero, hasOneDimBias);
-    } else if (n <= 112) {
-        LAUNCH_GEMM_OPT_KERNEL(112, isBetaZero, hasOneDimBias);
-    } else if (n <= 128) {
-        LAUNCH_GEMM_OPT_KERNEL(128, isBetaZero, hasOneDimBias);
-    } else if (n <= 144) {
-        LAUNCH_GEMM_OPT_KERNEL(144, isBetaZero, hasOneDimBias);
-    } else if (n <= 160) {
-        LAUNCH_GEMM_OPT_KERNEL(160, isBetaZero, hasOneDimBias);
-    } else if (n <= 176) {
-        LAUNCH_GEMM_OPT_KERNEL(176, isBetaZero, hasOneDimBias);
-    } else if (n <= 192) {
-        LAUNCH_GEMM_OPT_KERNEL(192, isBetaZero, hasOneDimBias);
-    } else if (n <= 208) {
-        LAUNCH_GEMM_OPT_KERNEL(208, isBetaZero, hasOneDimBias);
-    } else if (n <= 224) {
-        LAUNCH_GEMM_OPT_KERNEL(224, isBetaZero, hasOneDimBias);
-    } else if (n <= 240) {
-        LAUNCH_GEMM_OPT_KERNEL(240, isBetaZero, hasOneDimBias);
-    } else if (n <= 256) {
-        LAUNCH_GEMM_OPT_KERNEL(256, isBetaZero, hasOneDimBias);
-    }
-
-#undef LAUNCH_GEMM_OPT_KERNEL
-} // namespace muxi_layout_kernels
+    dispatchToNextIntInStaticOrderedInts<16, 32, 48, 64, 80, 96, 112, 128, 144,
+                                         160, 176, 192, 208, 224, 240, 256>(
+        n, [&]<int N>() {
+            auto cur_device = at::cuda::current_device();
+            const mcStream_t stream =
+                at::cuda::getCurrentCUDAStream(cur_device);
+            if (isBetaZero) {
+                if (hasOneDimBias) {
+                    GemmMmaLayoutAB_ContinuousCReuseAKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN,
+                        splitK, true, true>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) *
+                            splitN * splitK),
+                           block_dim_x, 0, stream>>>(A, B, C, m, n, k, alpha,
+                                                     beta, dev_bias);
+                } else {
+                    GemmMmaLayoutAB_ContinuousCReuseAKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN,
+                        splitK, true, false>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) *
+                            splitN * splitK),
+                           block_dim_x, 0, stream>>>(A, B, C, m, n, k, alpha,
+                                                     beta, dev_bias);
+                }
+            } else {
+                if (hasOneDimBias) {
+                    GemmMmaLayoutAB_ContinuousCReuseAKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN,
+                        splitK, false, true>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) *
+                            splitN * splitK),
+                           block_dim_x, 0, stream>>>(A, B, C, m, n, k, alpha,
+                                                     beta, dev_bias);
+                } else {
+                    GemmMmaLayoutAB_ContinuousCReuseAKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, APerWarp, splitN,
+                        splitK, false, false>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) *
+                            splitN * splitK),
+                           block_dim_x, 0, stream>>>(A, B, C, m, n, k, alpha,
+                                                     beta, dev_bias);
+                }
+            }
+        });
+}
 
 template <typename Tab, typename Taccum, typename Tc>
 void GemmMmaLayoutAB_ContinuousCReuseABaseKernelDispatchN(
@@ -890,72 +859,39 @@ void GemmMmaLayoutAB_ContinuousCReuseABaseKernelDispatchN(
     constexpr int block_dim_x = 256;
     bool isBetaZero = (beta == static_cast<Taccum>(0));
     bool hasOneDimBias = !(dev_bias == nullptr);
-
-#define LAUNCH_GEMM_BASE_KERNEL(N, IS_BETA_ZERO, HASONEDIMBIAS)                \
-    auto cur_device = at::cuda::current_device();                              \
-    const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if (IS_BETA_ZERO) {                                                        \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaLayoutAB_ContinuousCReuseABaseKernel<                       \
-                Tab, Taccum, Tc, block_dim_x, N, true, true>                   \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,       \
-                   stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);         \
-        } else {                                                               \
-            GemmMmaLayoutAB_ContinuousCReuseABaseKernel<                       \
-                Tab, Taccum, Tc, block_dim_x, N, true, false>                  \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,       \
-                   stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);         \
-        }                                                                      \
-    } else {                                                                   \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaLayoutAB_ContinuousCReuseABaseKernel<                       \
-                Tab, Taccum, Tc, block_dim_x, N, false, true>                  \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,       \
-                   stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);         \
-        } else {                                                               \
-            GemmMmaLayoutAB_ContinuousCReuseABaseKernel<                       \
-                Tab, Taccum, Tc, block_dim_x, N, false, false>                 \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,       \
-                   stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);         \
-        }                                                                      \
-    }
-
-    if (n <= 16) {
-        LAUNCH_GEMM_BASE_KERNEL(16, isBetaZero, hasOneDimBias);
-    } else if (n <= 32) {
-        LAUNCH_GEMM_BASE_KERNEL(32, isBetaZero, hasOneDimBias);
-    } else if (n <= 48) {
-        LAUNCH_GEMM_BASE_KERNEL(48, isBetaZero, hasOneDimBias);
-    } else if (n <= 64) {
-        LAUNCH_GEMM_BASE_KERNEL(64, isBetaZero, hasOneDimBias);
-    } else if (n <= 80) {
-        LAUNCH_GEMM_BASE_KERNEL(80, isBetaZero, hasOneDimBias);
-    } else if (n <= 96) {
-        LAUNCH_GEMM_BASE_KERNEL(96, isBetaZero, hasOneDimBias);
-    } else if (n <= 112) {
-        LAUNCH_GEMM_BASE_KERNEL(112, isBetaZero, hasOneDimBias);
-    } else if (n <= 128) {
-        LAUNCH_GEMM_BASE_KERNEL(128, isBetaZero, hasOneDimBias);
-    } else if (n <= 144) {
-        LAUNCH_GEMM_BASE_KERNEL(144, isBetaZero, hasOneDimBias);
-    } else if (n <= 160) {
-        LAUNCH_GEMM_BASE_KERNEL(160, isBetaZero, hasOneDimBias);
-    } else if (n <= 176) {
-        LAUNCH_GEMM_BASE_KERNEL(176, isBetaZero, hasOneDimBias);
-    } else if (n <= 192) {
-        LAUNCH_GEMM_BASE_KERNEL(192, isBetaZero, hasOneDimBias);
-    } else if (n <= 208) {
-        LAUNCH_GEMM_BASE_KERNEL(208, isBetaZero, hasOneDimBias);
-    } else if (n <= 224) {
-        LAUNCH_GEMM_BASE_KERNEL(224, isBetaZero, hasOneDimBias);
-    } else if (n <= 240) {
-        LAUNCH_GEMM_BASE_KERNEL(240, isBetaZero, hasOneDimBias);
-    } else if (n <= 256) {
-        LAUNCH_GEMM_BASE_KERNEL(256, isBetaZero, hasOneDimBias);
-    }
-
-#undef LAUNCH_GEMM_BASE_KERNEL
-} // namespace muxi_layout_kernels
+    dispatchToNextIntInStaticOrderedInts<16, 32, 48, 64, 80, 96, 112, 128, 144,
+                                         160, 176, 192, 208, 224, 240, 256>(
+        n, [&]<int N>() {
+            auto cur_device = at::cuda::current_device();
+            const mcStream_t stream =
+                at::cuda::getCurrentCUDAStream(cur_device);
+            if (isBetaZero) {
+                if (hasOneDimBias) {
+                    GemmMmaLayoutAB_ContinuousCReuseABaseKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, true, true>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,
+                           stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);
+                } else {
+                    GemmMmaLayoutAB_ContinuousCReuseABaseKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, true, false>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,
+                           stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);
+                }
+            } else {
+                if (hasOneDimBias) {
+                    GemmMmaLayoutAB_ContinuousCReuseABaseKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, false, true>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,
+                           stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);
+                } else {
+                    GemmMmaLayoutAB_ContinuousCReuseABaseKernel<
+                        Tab, Taccum, Tc, block_dim_x, N, false, false>
+                        <<<(m / 16 / (block_dim_x / WARP_SIZE)), block_dim_x, 0,
+                           stream>>>(A, B, C, m, n, k, alpha, beta, dev_bias);
+                }
+            }
+        });
+}
 
 template <typename Tab, typename Taccum, typename Tc>
 torch::Tensor GemmMmaLayoutAB_ContinuousCReuseAKernelDispatch(

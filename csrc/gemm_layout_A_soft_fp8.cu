@@ -628,84 +628,50 @@ void GemmMmaJustLayoutAKernelDispatchN_Soft_Fp8(Ta *A, uint32_t *A_scale, Tb *B,
     constexpr int block_dim_x = 256;
     bool isBetaZero = (beta == static_cast<Taccum>(0));
     bool hasOneDimBias = !(dev_bias == nullptr);
-
-#define LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(N, IS_BETA_ZERO, HASONEDIMBIAS)        \
-    auto cur_device = at::cuda::current_device();                              \
-    const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);      \
-    if (IS_BETA_ZERO) {                                                        \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc, block_dim_x, \
-                                              N, APerWarp, splitN, splitK,     \
-                                              true, true>                      \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *   \
-                    splitK),                                                   \
-                   block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k, alpha, \
-                                             beta, dev_bias);                  \
-        } else {                                                               \
-            GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc, block_dim_x, \
-                                              N, APerWarp, splitN, splitK,     \
-                                              true, false>                     \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *   \
-                    splitK),                                                   \
-                   block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k, alpha, \
-                                             beta, dev_bias);                  \
-        }                                                                      \
-    } else {                                                                   \
-        if (HASONEDIMBIAS) {                                                   \
-            GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc, block_dim_x, \
-                                              N, APerWarp, splitN, splitK,     \
-                                              false, true>                     \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *   \
-                    splitK),                                                   \
-                   block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k, alpha, \
-                                             beta, dev_bias);                  \
-        } else {                                                               \
-            GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc, block_dim_x, \
-                                              N, APerWarp, splitN, splitK,     \
-                                              false, false>                    \
-                <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *   \
-                    splitK),                                                   \
-                   block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k, alpha, \
-                                             beta, dev_bias);                  \
-        }                                                                      \
-    }
-
-    if (n <= 16) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(16, isBetaZero, hasOneDimBias);
-    } else if (n <= 32) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(32, isBetaZero, hasOneDimBias);
-    } else if (n <= 48) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(48, isBetaZero, hasOneDimBias);
-    } else if (n <= 64) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(64, isBetaZero, hasOneDimBias);
-    } else if (n <= 80) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(80, isBetaZero, hasOneDimBias);
-    } else if (n <= 96) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(96, isBetaZero, hasOneDimBias);
-    } else if (n <= 112) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(112, isBetaZero, hasOneDimBias);
-    } else if (n <= 128) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(128, isBetaZero, hasOneDimBias);
-    } else if (n <= 144) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(144, isBetaZero, hasOneDimBias);
-    } else if (n <= 160) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(160, isBetaZero, hasOneDimBias);
-    } else if (n <= 176) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(176, isBetaZero, hasOneDimBias);
-    } else if (n <= 192) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(192, isBetaZero, hasOneDimBias);
-    } else if (n <= 208) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(208, isBetaZero, hasOneDimBias);
-    } else if (n <= 224) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(224, isBetaZero, hasOneDimBias);
-    } else if (n <= 240) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(240, isBetaZero, hasOneDimBias);
-    } else if (n <= 256) {
-        LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8(256, isBetaZero, hasOneDimBias);
-    }
-
-#undef LAUNCH_GEMM_OPT_KERNEL_SOFT_FP8
-} // namespace muxi_layout_kernels
+    dispatchToNextIntInStaticOrderedInts<16, 32, 48, 64, 80, 96, 112, 128, 144,
+                                         160, 176, 192, 208, 224, 240,
+                                         256>(n, [&]<int N>() {
+        auto cur_device = at::cuda::current_device();
+        const mcStream_t stream = at::cuda::getCurrentCUDAStream(cur_device);
+        if (isBetaZero) {
+            if (hasOneDimBias) {
+                GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc,
+                                                  block_dim_x, N, APerWarp,
+                                                  splitN, splitK, true, true>
+                    <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *
+                        splitK),
+                       block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k,
+                                                 alpha, beta, dev_bias);
+            } else {
+                GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc,
+                                                  block_dim_x, N, APerWarp,
+                                                  splitN, splitK, true, false>
+                    <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *
+                        splitK),
+                       block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k,
+                                                 alpha, beta, dev_bias);
+            }
+        } else {
+            if (hasOneDimBias) {
+                GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc,
+                                                  block_dim_x, N, APerWarp,
+                                                  splitN, splitK, false, true>
+                    <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *
+                        splitK),
+                       block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k,
+                                                 alpha, beta, dev_bias);
+            } else {
+                GemmMmaJustLayoutAKernel_Soft_Fp8<Ta, Tb, Taccum, Tc,
+                                                  block_dim_x, N, APerWarp,
+                                                  splitN, splitK, false, false>
+                    <<<(m / 16 / (block_dim_x / WARP_SIZE * APerWarp) * splitN *
+                        splitK),
+                       block_dim_x, 0, stream>>>(A, A_scale, B, C, m, n, k,
+                                                 alpha, beta, dev_bias);
+            }
+        }
+    });
+}
 
 template <typename Ta, typename Tb, typename Taccum, typename Tc>
 void GemmMmaJustLayoutAKernelDispatch_Soft_Fp8(Ta *A, uint32_t *A_scale, Tb *B,
