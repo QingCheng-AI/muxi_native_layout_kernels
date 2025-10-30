@@ -1,5 +1,9 @@
 #pragma once
+
+#include "../utils.cuh"
 #include "group_gemm_utils.h"
+
+namespace muxi_layout_kernels {
 
 template <typename Ta, typename Tb, typename Taccum, typename Tc,
           int BLOCK_DIM_X, int tile_m, int tile_n, int tile_k,
@@ -55,7 +59,7 @@ __device__ void fused_moe_second_gemm_kernel(
         if (thread_token_ptr >= padded_ptr_number) {
             thread_token_ptr = 0;
             C_write_ptr[j] = -1;
-            thread_token_weight[j] = 0;
+            thread_token_weight[j] = zero<Tc>();
         } else {
             thread_token_weight[j] = routing_weights[thread_token_ptr];
         }
@@ -273,7 +277,7 @@ __device__ void fused_moe_second_gemm_kernel(
                 Tc tc_tmp[4];
 #pragma unroll
                 for (int t = 0; t < 4; t++) {
-                    tc_tmp[t] = __hmul(static_cast<Tc>(C_f32[i][j][t]),
+                    tc_tmp[t] = __hmul(fp_cast<Tc>(C_f32[i][j][t]),
                                        thread_token_weight[j]);
                 }
 
@@ -324,3 +328,5 @@ __global__ void fused_moe_second_group_gemm_kernel(
         A_scale + experts_ids[gemm_id] * A_scale_m * A_scale_n, A_scale_m,
         A_scale_n);
 }
+
+} // namespace muxi_layout_kernels

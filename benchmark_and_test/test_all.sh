@@ -15,7 +15,7 @@ apt update && apt install -y g++-11
 
 pip install -U pip -i https://pypi.tuna.tsinghua.edu.cn/simple
 pip install pytest -i https://pypi.tuna.tsinghua.edu.cn/simple
-pip install $SCRIPT_DIR/.. -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install $SCRIPT_DIR/.. --no-build-isolation -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 python $SCRIPT_DIR/gemm_benchmark_test_bf16.py
 python $SCRIPT_DIR/gemm_benchmark_test_fp16.py

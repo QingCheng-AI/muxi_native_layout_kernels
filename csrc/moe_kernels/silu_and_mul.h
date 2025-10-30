@@ -1,8 +1,11 @@
 #pragma once
 
+#include "../utils.cuh"
 #include "group_gemm_utils.h"
 
-int nextPow2_bit(int n) {
+namespace muxi_layout_kernels {
+
+inline int nextPow2_bit(int n) {
     if (n == 0)
         return 1;
     n--;
@@ -16,7 +19,7 @@ int nextPow2_bit(int n) {
 }
 
 template <typename T> __device__ __forceinline__ T my_silu(const T &x) {
-    return (T)(((float)x) / (1.0f + exp(-(float)x)));
+    return fp_cast<T>((fp_cast<float>(x)) / (1.0f + exp(-fp_cast<float>(x))));
 }
 
 template <typename T>
@@ -77,3 +80,5 @@ __global__ void silu_and_mul_kernel_block(T *input, int n, int m) {
         input[row_id * m + chunkSize * ELEMENTSPERACCESS + tid] = __hmul(a, b);
     }
 }
+
+} // namespace muxi_layout_kernels

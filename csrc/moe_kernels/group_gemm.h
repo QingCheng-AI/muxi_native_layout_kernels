@@ -1,4 +1,5 @@
 #pragma once
+
 #include <mc_runtime.h>
 
 #include <chrono>
@@ -8,6 +9,8 @@
 #include "group_gemm_kernel.h"
 #include "group_gemm_utils.h"
 #include "silu_and_mul_kernel.h"
+
+namespace muxi_layout_kernels {
 
 template <typename Tab, typename Taccum, typename Tc, int BLOCK_DIM_X,
           int APerWarp, int splitN, int splitK, int N>
@@ -304,3 +307,5 @@ void group_gemm_launcher2(Tab *A[], Tab *B[], Tc *C, int m, int n, int k,
     mcFree(dev_blockCountSum);
     free(blockCountSum);
 }
+
+} // namespace muxi_layout_kernels

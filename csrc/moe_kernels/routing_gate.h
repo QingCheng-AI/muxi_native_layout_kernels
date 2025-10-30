@@ -1,8 +1,15 @@
 #pragma once
 
+#include <optional>
+
+#include <torch/extension.h>
+#include <torch/torch.h>
+#include <torch/types.h>
+
 #include "fused_topK.h"
 #include "group_gemm_utils.h"
-// #include "../routing_gate.h"
+
+namespace muxi_layout_kernels {
 
 // TODO: softmax for expert weight compute and top-k
 
@@ -12,10 +19,10 @@
 // TODO: implement expert select
 // score_fun: 0 for softmax, 1 for sigmoid
 template <typename Taccum, typename A>
-void routing_gate(A *gating_output, int score_fun, int num_experts,
-                  int batch_size, int topK, int n_groups, int topK_groups,
-                  int hidden_size, int *expertsIds, A *selected_experts_weights,
-                  A *load_balance_bias) {
+void routing_gate_inner(A *gating_output, int score_fun, int num_experts,
+                        int batch_size, int topK, int n_groups, int topK_groups,
+                        int hidden_size, int *expertsIds,
+                        A *selected_experts_weights, A *load_balance_bias) {
     A *softmax_experts_score;
     mcMalloc((void **)&softmax_experts_score,
              sizeof(A) * batch_size * num_experts);
@@ -41,10 +48,10 @@ void routing_gate(A *gating_output, int score_fun, int num_experts,
     // just for deepseek_V3 and deepseek_R1
     if (n_groups == 8 && topK_groups == 4 && topK == 8 && num_experts == 256 &&
         (score_fun == 0 || score_fun == 1)) {
-        fused_softmax_topk::fused_softmax_topk_launcher<A>(
-            gating_output, score_fun, batch_size, n_groups, topK_groups,
-            dev_expertsIds, dev_selected_experts_weights, topK, num_experts,
-            load_balance_bias);
+        fused_softmax_topk_launcher<A>(gating_output, score_fun, batch_size,
+                                       n_groups, topK_groups, dev_expertsIds,
+                                       dev_selected_experts_weights, topK,
+                                       num_experts, load_balance_bias);
     } else {
         assert(
             false &&
@@ -65,3 +72,12 @@ void routing_gate(A *gating_output, int score_fun, int num_experts,
     mcFree(dev_selected_experts_group_weights);
     mcFree(dev_selected_experts_group_index);
 }
+
+void routing_gate(
+    torch::Tensor &gating_output, int64_t score_fun, int64_t batch_size,
+    int64_t hidden_size, int64_t n_groups, int64_t topK_groups,
+    torch::Tensor &experts_ids, torch::Tensor &selected_experts_weights,
+    int64_t topK,
+    c10::optional<torch::Tensor> load_balance_bias = c10::nullopt);
+
+} // namespace muxi_layout_kernels

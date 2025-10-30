@@ -2,7 +2,7 @@
 #include "group_gemm_utils.h"
 
 int main() {
-    // Test fused_softmax_topk::fused_softmax_topk_kernel
+    // Test muxi_layout_kernels::fused_softmax_topk_kernel
 
     using TA = __half;
     TA *input = (TA *)malloc(256 * 16 * sizeof(TA));
@@ -18,7 +18,7 @@ int main() {
     int *dev_expertsIds;
     mcMalloc((void **)&dev_expertsIds, sizeof(int) * 8 * 16);
 
-    fused_softmax_topk::fused_softmax_topk_launcher<TA>(
+    muxi_layout_kernels::fused_softmax_topk_launcher<TA>(
         dev_input, 16, 8, 4, dev_expertsIds, dev_selectedExpertsWeights, 8,
         256);
 

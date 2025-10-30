@@ -59,7 +59,7 @@ setup(
         CUDAExtension(
             name="muxi_layout_kernels_ext",
             sources=[
-                "./csrc/gemm_kernel.cu",
+                "./csrc/ffi.cu",
                 "./csrc/arg_selector.cu",
                 "./csrc/layout_b.cu",
                 "./csrc/re_layout_c.cu",
@@ -75,6 +75,11 @@ setup(
                 "./csrc/muxi_hgemm_layoutC.cu",
                 "./csrc/gemv_layout_a.cu",
                 "./csrc/fp8_weight_repack.cu",
+                "./csrc/moe_kernels/routing_gate.cu",
+                "./csrc/moe_kernels/experts_compute.cu",
+                "./csrc/moe_kernels/fused_gating.cu",
+                "./csrc/moe_kernels/fused_experts_compute.cu",
+                "./csrc/moe_kernels/moe_align_tokens.cu",
             ],
             extra_compile_args={
                 "cxx": host_compile_flags,

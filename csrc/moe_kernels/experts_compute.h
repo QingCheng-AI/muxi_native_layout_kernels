@@ -1,3 +1,11 @@
+#pragma once
+
+#include <optional>
+
+#include <torch/extension.h>
+#include <torch/torch.h>
+#include <torch/types.h>
+
 #include "copyAndLayoutB.h"
 #include "group_gemm.h"
 #include "group_gemm_utils.h"
@@ -5,12 +13,15 @@
 #include "muxi_hgemm_layout_fused.h"
 #include "silu_and_mul_kernel.h"
 
+namespace muxi_layout_kernels {
+
 template <typename W, typename Taccum, typename A>
-void experts_compute(W **experts_weights_matrix1, W **experts_weights_matrix2,
-                     A *activations, int m1, int n1, int k1, int m2, int n2,
-                     int k2, int batchSize, int expertCount,
-                     int dynamicExpertsPerAct, int *expertsIds,
-                     A *activedExpertsWeights, A **bias) {
+void experts_compute_inner(W **experts_weights_matrix1,
+                           W **experts_weights_matrix2, A *activations, int m1,
+                           int n1, int k1, int m2, int n2, int k2,
+                           int batchSize, int expertCount,
+                           int dynamicExpertsPerAct, int *expertsIds,
+                           A *activedExpertsWeights, A **bias) {
     constexpr mcStream_t streamId = 0;
 
     A *dev_gemm_result_buffer;
@@ -112,7 +123,7 @@ void experts_compute(W **experts_weights_matrix1, W **experts_weights_matrix2,
     W **A_group_gemm = (W **)malloc(sizeof(W *) * gemmCount);
     A **B_group_gemm = (A **)malloc(sizeof(A *) * gemmCount);
     A **C_group_gemm = (A **)malloc(sizeof(A *) * gemmCount);
-    A **A_group_gemm2 = (A **)malloc(sizeof(A *) * gemmCount);
+    W **A_group_gemm2 = (W **)malloc(sizeof(W *) * gemmCount);
 
     gemm_id = 0;
     for (int i = 0; i < expertCount; i++) {
@@ -159,9 +170,8 @@ void experts_compute(W **experts_weights_matrix1, W **experts_weights_matrix2,
         // use layout muxi hgemm
         for (int i = 0; i < gemmCount; i++) {
             dim3 grid(m1 / 128, (n1 + 127) / 128, 1);
-            muxi_layout_kernels::
-                layout_hgemm_tn_128x128x128_4m1n8k_256t_layoutC<A, A, Taccum,
-                                                                true, false>
+            layout_hgemm_tn_128x128x128_4m1n8k_256t_layoutC<A, A, Taccum, true,
+                                                            false>
                 <<<grid, 256, 0, stream>>>(A_group_gemm[i], B_group_gemm[i],
                                            C_group_gemm[i], m1, n1, k1, k1, k1,
                                            m1, 1.0f, 0.0f);
@@ -181,9 +191,8 @@ void experts_compute(W **experts_weights_matrix1, W **experts_weights_matrix2,
         // use layout muxi hgemm
         for (int i = 0; i < gemmCount; i++) {
             dim3 grid(m2 / 128, (n2 + 127) / 128, 1);
-            muxi_layout_kernels_fused::
-                layout_hgemm_tn_128x128x128_4m1n8k_256t_fused<A, A, Taccum,
-                                                              false, false>
+            layout_hgemm_tn_128x128x128_4m1n8k_256t_fused<A, A, Taccum, false,
+                                                          false>
                 <<<grid, 256, 0, stream>>>(
                     A_group_gemm2[i], C_group_gemm[i], activations, m2, n2, k2,
                     k2, k2, m2, dev_scoreWeightsForGEMMs + i * batchSize, 1.0f);
@@ -209,3 +218,13 @@ void experts_compute(W **experts_weights_matrix1, W **experts_weights_matrix2,
     free(A_group_gemm2);
     free(scoreWeightsForGEMMs);
 }
+
+void experts_compute(torch::Tensor &experts_weights_matrix1,
+                     torch::Tensor &experts_weights_matrix2,
+                     torch::Tensor &activations, int64_t batchSize,
+                     int64_t expertCount, int64_t dynamicExpertsPerAct,
+                     torch::Tensor &expertsIds,
+                     torch::Tensor &activedExpertsWeights,
+                     c10::optional<torch::Tensor> bias = c10::nullopt);
+
+} // namespace muxi_layout_kernels

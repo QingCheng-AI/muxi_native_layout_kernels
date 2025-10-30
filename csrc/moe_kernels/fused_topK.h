@@ -1,11 +1,10 @@
 #pragma once
 
 #include "../dispatch_utils.h"
+#include "../utils.cuh"
 #include "group_gemm_utils.h"
 
-namespace fused_softmax_topk {
-
-#define DEBUG_ROW 0
+namespace muxi_layout_kernels {
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -18,13 +17,6 @@ template <typename T,
 class alignas(Alignment) AlignedArray {
     T data[N];
 };
-
-template <typename T>
-__device__ __forceinline__ T my_shfl_xor_sync(T var, int offset) {
-    int index = (threadIdx.x % WARP_SIZE) ^ offset;
-    int ret = __builtin_mxc_bsm_bpermute(index << 2, *((int *)&var));
-    return *((T *)&ret);
-}
 
 template <typename T, int VPT, int NUM_EXPERTS, int BLOCK_SIZE,
           int BYTES_PER_LDG, int topK>
@@ -98,8 +90,9 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     float row_chunk_float[VPT];
 #pragma unroll
     for (int i = 0; i < VPT; ++i) {
-        float tmp_float = expf((float)row_chunk[i] - (float)thread_max_val);
-        row_chunk[i] = (T)tmp_float;
+        float tmp_float = fp_cast<float>(expf(fp_cast<float>(row_chunk[i]) -
+                                              fp_cast<float>(thread_max_val)));
+        row_chunk[i] = fp_cast<T>(tmp_float);
         row_chunk_float[i] = tmp_float;
         thread_sum_val = thread_sum_val + tmp_float;
     }
@@ -113,7 +106,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     const float softmax_row_factor = 1.0f / thread_sum_val;
 #pragma unroll
     for (int i = 0; i < VPT; ++i) {
-        row_chunk[i] = (T)(row_chunk_float[i] * softmax_row_factor);
+        row_chunk[i] = fp_cast<T>(row_chunk_float[i] * softmax_row_factor);
     }
 
     // Add the bias to softmax values.
@@ -144,9 +137,9 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     const int experts_per_group = NUM_EXPERTS / n_groups;
     const int experts_group_id = threadIdInGroup * VPT / experts_per_group;
     int max_id = -1;
-    T max_score_in_experts_group = 0;
+    T max_score_in_experts_group = zero<T>();
     for (int k = 0; k < topInGroup; k++) {
-        T max_score_in_experts_group_tmp = 0.0;
+        T max_score_in_experts_group_tmp = zero<T>();
         int max_id_tmp = -1;
         for (int i = 0; i < VPT; ++i) {
             if ((threadIdInGroup * VPT + i) == max_id)
@@ -200,7 +193,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
 
         // TODO: clear the max value by set 0.0
         if (experts_group_id == max_experts_group_id) {
-            max_score_in_experts_group = 0.0;
+            max_score_in_experts_group = zero<T>();
         }
         max_experts_group_id = experts_group_id;
         max_tmp = max_score_in_experts_group;
@@ -216,8 +209,8 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     }
     if (set_zero) {
         for (int i = 0; i < VPT; ++i) {
-            row_chunk[i] = 0.0;
-            row_chunk_bias[i] = 0.0;
+            row_chunk[i] = zero<T>();
+            row_chunk_bias[i] = zero<T>();
         }
     }
 
@@ -287,7 +280,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
             if (threadIdInGroup == thread_to_clear_in_group) {
                 const int offset_for_expert = expert_id % ELTS_PER_LDG;
                 row_chunk_bias[ldg_group_for_expert * ELTS_PER_LDG +
-                               offset_for_expert] = 0.0f;
+                               offset_for_expert] = zero<T>();
             }
         }
     }
@@ -388,7 +381,8 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
 
     // ===== compute sigmoid values =====
     for (int i = 0; i < VPT; ++i) {
-        row_chunk[i] = (T)(1.0f / (1.0f + expf(-(float)row_chunk[i])));
+        row_chunk[i] =
+            fp_cast<T>(1.0f / (1.0f + expf(-fp_cast<float>(row_chunk[i]))));
     }
 
     // Add the bias to sigmoid values.
@@ -421,9 +415,9 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     int start_thread_for_group = experts_group_id * (experts_per_group / VPT);
     int max_id = -1;
     int previous_max_id = -1;
-    T max_score_in_experts_group = 0.0;
+    T max_score_in_experts_group = zero<T>();
     for (int k = 0; k < topInGroup; k++) {
-        T max_score_in_experts_group_tmp = 0.0;
+        T max_score_in_experts_group_tmp = zero<T>();
         for (int i = 0; i < VPT; ++i) {
             // if (threadIdInGroup * VPT + i == max_id) continue;
             T current_score = row_chunk_bias[i];
@@ -479,7 +473,7 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
 
         // TODO: clear the max value by set 0.0
         if (experts_group_id == max_experts_group_id) {
-            max_score_in_experts_group = 0.0;
+            max_score_in_experts_group = zero<T>();
         }
         max_experts_group_id = experts_group_id;
         max_tmp = max_score_in_experts_group;
@@ -495,8 +489,8 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
     }
     if (set_zero) {
         for (int i = 0; i < VPT; ++i) {
-            row_chunk[i] = 0.0;
-            row_chunk_bias[i] = 0.0;
+            row_chunk[i] = zero<T>();
+            row_chunk_bias[i] = zero<T>();
         }
     }
 
@@ -565,10 +559,8 @@ __global__ void __launch_bounds__(BLOCK_SIZE)
                 (expert_id / ELTS_PER_LDG) % THREADS_PER_ROW;
             if (threadIdInGroup == thread_to_clear_in_group) {
                 const int offset_for_expert = expert_id % ELTS_PER_LDG;
-                // asm("/* check here 0.0! */");
                 row_chunk_bias[ldg_group_for_expert * ELTS_PER_LDG +
-                               offset_for_expert] = (T)0.0f;
-                // asm("/* check here 0.0! */");
+                               offset_for_expert] = zero<T>();
             }
         }
     }
@@ -688,4 +680,4 @@ void fused_softmax_topk_launcher(const T *input, int score_fun,
         });
 }
 
-} // namespace fused_softmax_topk
+} // namespace muxi_layout_kernels

@@ -1,9 +1,12 @@
 #pragma once
 
+#include "../utils.cuh"
 #include "group_gemm_utils.h"
 
+namespace muxi_layout_kernels {
+
 template <typename T> __device__ __forceinline__ T silu(const T &x) {
-    return (T)(((float)x) / (1.0f + exp(-(float)x)));
+    return fp_cast<T>((fp_cast<float>(x)) / (1.0f + exp(-fp_cast<float>(x))));
 }
 
 template <typename T>
@@ -45,3 +48,5 @@ __global__ void silu_and_mul(T **input, int n, int m, int active_count) {
 
     silu_and_mul_kernel<T>(input[activeId], n, m, warpIdInExpert);
 }
+
+} // namespace muxi_layout_kernels

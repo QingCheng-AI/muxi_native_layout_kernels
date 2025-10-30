@@ -1,5 +1,9 @@
 #pragma once
+
+#include "../utils.cuh"
 #include "group_gemm_utils.h"
+
+namespace muxi_layout_kernels {
 
 // first block gemm kernel for __device__ later
 template <typename Ta, typename Tb, typename Taccum, typename Tc,
@@ -237,10 +241,10 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
             for (int t = 0; t < 4; t++) {
                 C_f32_res[t] = C_f32[j][index_A][t] * alpha;
             }
-            Tc C_tc_tmp[4] = {0};
+            Tc C_tc_tmp[4];
 #pragma unroll 4
             for (int t = 0; t < 4; t++) {
-                C_tc_tmp[t] = static_cast<Tc>(C_f32_res[t]);
+                C_tc_tmp[t] = fp_cast<Tc>(C_f32_res[t]);
             }
             if constexpr (splitK > 1) {
                 if constexpr (std::is_same_v<Tc, __half>) {
@@ -289,3 +293,5 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
         sorted_token_ids + gemm_id * microBatchsize, m, n, k, alpha, topk,
         padded_ptr_number, gemm_warp_id);
 }
+
+} // namespace muxi_layout_kernels

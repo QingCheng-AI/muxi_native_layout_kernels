@@ -1,4 +1,5 @@
 #pragma once
+
 #include <c10/cuda/CUDAStream.h>
 #include <maca.h>
 #include <maca_bfloat16.h>
@@ -142,6 +143,14 @@ template <> __device__ __attribute__((always_inline)) __half zero<__half>() {
     asm("mov_b32 %0, 0" : "=r"(zero));
     return zero;
 }
+template <>
+__device__ __attribute__((always_inline)) __maca_bfloat16
+zero<__maca_bfloat16>() {
+    // Work around a mxcc bug on immediate values
+    __maca_bfloat16 zero;
+    asm("mov_b32 %0, 0" : "=r"(zero));
+    return zero;
+}
 template <> __device__ __attribute__((always_inline)) float zero<float>() {
     // Work around a mxcc bug on immediate values
     float zero;
@@ -171,7 +180,7 @@ __device__ __attribute__((always_inline)) maca_bfloat16
 dotBf16(const UINT4 &lhs, const UINT4 &rhs) {
     // MUXI can not compute BF16 without tensor core, so don`t have asm impl
     // here. maca_bfloat16 accum = static_cast<maca_bfloat16>(0.0f);
-    maca_bfloat16 accum = 0x0000;
+    maca_bfloat16 accum = zero<maca_bfloat16>();
     accum += reinterpret_cast<const maca_bfloat16 *>(&lhs)[0] *
              reinterpret_cast<const maca_bfloat16 *>(&rhs)[0];
     accum += reinterpret_cast<const maca_bfloat16 *>(&lhs)[1] *
@@ -239,6 +248,28 @@ __forceinline__ __device__ void scalefp8tobf16(uint32_t fp8, uint16_t *tmp4,
     interm = ((fp8 & 0x00000080) << 24) | ((fp8 & 0x0000007f) << 20);
     tmp = (*bias) * (*reinterpret_cast<float *>(&interm));
     tmp4[0] = uint16_t((*reinterpret_cast<uint32_t *>(&tmp) >> 16));
+}
+
+template <typename dst_type, typename from_type>
+__device__ inline dst_type fp_cast(from_type x) {
+    if constexpr (std::is_same_v<from_type, dst_type>) {
+        return x;
+    } else if constexpr (std::is_same_v<from_type, float> &&
+                         std::is_same_v<dst_type, __half>) {
+        return __float2half(x);
+    } else if constexpr (std::is_same_v<from_type, float> &&
+                         std::is_same_v<dst_type, __maca_bfloat16>) {
+        return __float2bfloat16(x);
+    } else if constexpr (std::is_same_v<from_type, __half> &&
+                         std::is_same_v<dst_type, float>) {
+        return __half2float(x);
+    } else if constexpr (std::is_same_v<from_type, __maca_bfloat16> &&
+                         std::is_same_v<dst_type, float>) {
+        return __bfloat162float(x);
+    } else {
+        // For other conversions, go through float as an intermediate step
+        return fp_cast<float, dst_type>(fp_cast<from_type, float>(x));
+    }
 }
 
 } // namespace muxi_layout_kernels

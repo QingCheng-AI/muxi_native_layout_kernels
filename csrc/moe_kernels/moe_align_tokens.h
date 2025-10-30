@@ -1,5 +1,8 @@
 #pragma once
+
 #include "group_gemm_utils.h"
+
+namespace muxi_layout_kernels {
 
 // moe_align_blockSize kernel, compute comsum buffer for sorted_token_ids
 template <int num_experts, int micro_batchsize>
@@ -88,14 +91,6 @@ __global__ void moe_align_tokens_kernel(
 __global__ void moe_align_tokens_sorted_token_ids_kernel(
     const int *__restrict__ topk_ids, int *__restrict__ sorted_token_ids,
     int *__restrict__ cumsum_buffer, int topk_ids_numel,
-    int max_num_tokens_padded) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const int stride = blockDim.x * gridDim.x;
+    int max_num_tokens_padded);
 
-    // for relaxed sorted token ids
-    for (int i = tid; i < topk_ids_numel; i += stride) {
-        int expert_id = topk_ids[i];
-        int rank_post_pad = atomicAdd(&cumsum_buffer[expert_id], 1);
-        sorted_token_ids[rank_post_pad] = i;
-    }
-}
+} // namespace muxi_layout_kernels

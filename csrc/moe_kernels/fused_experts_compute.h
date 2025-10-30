@@ -1,4 +1,11 @@
 #pragma once
+
+#include <optional>
+
+#include <torch/extension.h>
+#include <torch/torch.h>
+#include <torch/types.h>
+
 #include "group_gemm_first.h"
 #include "group_gemm_second.h"
 #include "group_gemm_utils.h"
@@ -7,14 +14,15 @@
 #include "soft_fp8_group_gemm_first.h"
 #include "soft_fp8_group_gemm_second.h"
 
+namespace muxi_layout_kernels {
+
 template <int num_experts, typename W, typename Taccum, typename A>
-void fused_experts_compute(W *experts_weights_matrix1,
-                           W *experts_weights_matrix2, A *activations, int m1,
-                           int n1, int k1, int m2, int n2, int k2,
-                           int batchsize, int topK, int *expertsIds,
-                           A *activedExpertsWeights, int *dev_sorted_token_ids,
-                           int *dev_cumsum_buffer, int *dev_padded_num_experts,
-                           int *dev_experts_ids, A *dev_C, A *y) {
+void fused_experts_compute_inner(
+    W *experts_weights_matrix1, W *experts_weights_matrix2, A *activations,
+    int m1, int n1, int k1, int m2, int n2, int k2, int batchsize, int topK,
+    int *expertsIds, A *activedExpertsWeights, int *dev_sorted_token_ids,
+    int *dev_cumsum_buffer, int *dev_padded_num_experts, int *dev_experts_ids,
+    A *dev_C, A *y) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
     constexpr int micro_batchsize = 16;
@@ -83,15 +91,13 @@ void fused_experts_compute(W *experts_weights_matrix1,
 
 // This is specifically for the case when using soft fp8
 template <int num_experts, typename W, typename Taccum, typename A>
-void fused_experts_compute(W *experts_weights_matrix1,
-                           W *experts_weights_matrix2, A *activations, int m1,
-                           int n1, int k1, int m2, int n2, int k2,
-                           int batchsize, int topK, int *expertsIds,
-                           A *activedExpertsWeights, int *dev_sorted_token_ids,
-                           int *dev_cumsum_buffer, int *dev_padded_num_experts,
-                           int *dev_experts_ids, A *dev_C, A *y,
-                           Taccum *w1_scale, Taccum *w2_scale, int w1_scale_m,
-                           int w1_scale_n, int w2_scale_m, int w2_scale_n) {
+void fused_experts_compute_inner(
+    W *experts_weights_matrix1, W *experts_weights_matrix2, A *activations,
+    int m1, int n1, int k1, int m2, int n2, int k2, int batchsize, int topK,
+    int *expertsIds, A *activedExpertsWeights, int *dev_sorted_token_ids,
+    int *dev_cumsum_buffer, int *dev_padded_num_experts, int *dev_experts_ids,
+    A *dev_C, A *y, Taccum *w1_scale, Taccum *w2_scale, int w1_scale_m,
+    int w1_scale_n, int w2_scale_m, int w2_scale_n) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
     constexpr int micro_batchsize = 16;
@@ -160,3 +166,25 @@ void fused_experts_compute(W *experts_weights_matrix1,
                      activedExpertsWeights, topK * batchsize, topK,
                      dev_padded_num_experts, w2_scale, w2_scale_m, w2_scale_n);
 }
+
+void fused_experts_compute(
+    torch::Tensor &experts_weights_matrix1,
+    torch::Tensor &experts_weights_matrix2, torch::Tensor &activations,
+    int64_t batchSize, int64_t expertCount, int64_t dynamicExpertsPerAct,
+    torch::Tensor &expertsIds, torch::Tensor &activedExpertsWeights,
+    torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
+    torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
+    torch::Tensor &dev_C, torch::Tensor &y);
+
+void fused_experts_compute(
+    torch::Tensor &experts_weights_matrix1,
+    torch::Tensor &experts_weights_matrix2, torch::Tensor &activations,
+    int64_t batchSize, int64_t expertCount, int64_t dynamicExpertsPerAct,
+    torch::Tensor &expertsIds, torch::Tensor &activedExpertsWeights,
+    torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
+    torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
+    torch::Tensor &dev_C, torch::Tensor &y, torch::Tensor &w1_scale,
+    torch::Tensor &w2_scale, std::vector<int64_t> &block_shape,
+    bool soft_fp8 = false);
+
+} // namespace muxi_layout_kernels

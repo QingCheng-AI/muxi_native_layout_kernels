@@ -2,7 +2,10 @@
 
 #include <mc_runtime.h>
 
+#include "../utils.cuh"
 #include "group_gemm_utils.h"
+
+namespace muxi_layout_kernels {
 
 template <typename Tab, typename Taccum, typename Tc, int BLOCK_DIM_X, int N,
           int APerWarp, int splitN, int splitK, bool IsBetaZero,
@@ -221,10 +224,10 @@ __device__ void GemmMmaLayoutABCReuseAKernel(Tab *A, Tab *B, Tc *C, int m,
             for (int t = 0; t < 4; t++) {
                 C_f32_res[t] = C_f32[j][index_A][t] * alpha;
             }
-            Tc C_tc_tmp[4] = {0};
+            Tc C_tc_tmp[4];
 #pragma unroll 4
             for (int t = 0; t < 4; t++) {
-                C_tc_tmp[t] = static_cast<Tc>(C_f32_res[t]);
+                C_tc_tmp[t] = fp_cast<Tc>(C_f32_res[t]);
             }
 
             if constexpr (HasOneDimBias) {
@@ -496,12 +499,12 @@ __device__ void GemmMmaLayoutAB_ContinuousCReuseA_and_mul_weights_Kernel(
 #pragma unroll 4
             for (int t = 0; t < 4; t++) {
                 C_f32_res[t] =
-                    C_f32[j][index_A][t] * static_cast<float>(score_weight);
+                    C_f32[j][index_A][t] * fp_cast<float>(score_weight);
             }
-            Tc C_tc_tmp[4] = {0};
+            Tc C_tc_tmp[4];
 #pragma unroll 4
             for (int t = 0; t < 4; t++) {
-                C_tc_tmp[t] = static_cast<Tc>(C_f32_res[t]);
+                C_tc_tmp[t] = fp_cast<Tc>(C_f32_res[t]);
             }
 
             if constexpr (HasOneDimBias) {
@@ -566,3 +569,5 @@ GemmMmaLayoutAB_ContinuousCReuseA_and_mul_weights_KernelDispatch(
         Tab, Taccum, Tc, BLOCK_DIM_X, N, APerWarp, splitN, splitK, true, false>(
         A, B, C, m, n, k, alpha, beta, dev_bias, gemm_warpId);
 }
+
+} // namespace muxi_layout_kernels

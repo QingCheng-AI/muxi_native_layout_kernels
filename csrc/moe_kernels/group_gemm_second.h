@@ -1,5 +1,9 @@
 #pragma once
+
+#include "../utils.cuh"
 #include "group_gemm_utils.h"
+
+namespace muxi_layout_kernels {
 
 template <typename Ta, typename Tb, typename Taccum, typename Tc,
           int BLOCK_DIM_X, int tile_m, int tile_n, int tile_k,
@@ -54,7 +58,7 @@ __device__ void fused_moe_second_gemm_kernel(Ta *A, Tb *B, Tc *C,
         if (thread_token_ptr >= padded_ptr_number) {
             thread_token_ptr = 0;
             C_write_ptr[j] = -1;
-            thread_token_weight[j] = 0;
+            thread_token_weight[j] = zero<Tc>();
         } else {
             thread_token_weight[j] = routing_weights[thread_token_ptr];
         }
@@ -245,7 +249,7 @@ __device__ void fused_moe_second_gemm_kernel(Ta *A, Tb *B, Tc *C,
                 Tc tc_tmp[4];
 #pragma unroll
                 for (int t = 0; t < 4; t++) {
-                    tc_tmp[t] = __hmul(static_cast<Tc>(C_f32[i][j][t]),
+                    tc_tmp[t] = __hmul(fp_cast<Tc>(C_f32[i][j][t]),
                                        thread_token_weight[j]);
                 }
 
@@ -293,3 +297,5 @@ fused_moe_second_group_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids,
         sorted_token_ids + gemm_id * micro_batchsize, m, n, k, routing_weights,
         padded_ptr_number, topk, block_x_id_in_gemm, block_y_id_in_gemm);
 }
+
+} // namespace muxi_layout_kernels
