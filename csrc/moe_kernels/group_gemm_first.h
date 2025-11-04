@@ -5,27 +5,139 @@
 
 namespace muxi_layout_kernels {
 
-// first block gemm kernel for __device__ later
-template <typename Ta, typename Tb, typename Taccum, typename Tc,
-          int BLOCK_DIM_X, int microBatchsize, int APerWarp, int splitK>
-__device__ void
-fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
-                            int n, int k, Taccum alpha, int topk,
-                            int padded_ptr_number, int gemm_warp_id) {
-    // some constexpr parameters just support FP16/BF16, if you want to support
-    // fp8… , you need to adjust these parameters
-    constexpr int stages = 4;
-    constexpr int elementsPerAccess = 8;
-    constexpr int rowThreadsPerMma = 16;
-    constexpr int colThreadsPerMma = 4;
-    constexpr int elementsPerThreadPerMma = 4;
-    constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
-    constexpr int numCycleB = microBatchsize / rowThreadsPerMma;
-    constexpr int numCycleBPerWarp =
+template <int _BLOCK_DIM_X, int _microBatchsize, int _APerWarp, int _splitK,
+          int _stages = 4, int _elementsPerAccess = 8,
+          int _rowThreadsPerMma = 16, int _colThreadsPerMma = 4,
+          int _elementsPerThreadPerMma = 4>
+    requires(_BLOCK_DIM_X % WARP_SIZE == 0 &&
+             _microBatchsize % _rowThreadsPerMma == 0)
+struct FusedMoeFirstGemmKernelHyperParams {
+    static constexpr int BLOCK_DIM_X = _BLOCK_DIM_X;
+    static constexpr int microBatchsize = _microBatchsize;
+    static constexpr int APerWarp = _APerWarp;
+    static constexpr int splitK = _splitK;
+    static constexpr int stages = _stages;
+    static constexpr int elementsPerAccess = _elementsPerAccess;
+    static constexpr int rowThreadsPerMma = _rowThreadsPerMma;
+    static constexpr int colThreadsPerMma = _colThreadsPerMma;
+    static constexpr int elementsPerThreadPerMma = _elementsPerThreadPerMma;
+
+    static constexpr int warpPerBlock = BLOCK_DIM_X / WARP_SIZE;
+    static constexpr int numCycleB = microBatchsize / rowThreadsPerMma;
+    static constexpr int numCycleBPerWarp =
         (numCycleB + warpPerBlock - 1) / warpPerBlock;
-    constexpr int sharedNumCycleB = numCycleB;
-    constexpr int sharedArriveCount =
+    static constexpr int sharedNumCycleB = numCycleB;
+    static constexpr int sharedArriveCount =
         (sharedNumCycleB + warpPerBlock - 1) / warpPerBlock;
+};
+
+template <typename _Ta> struct FusedMoeFirstGemmAInputFp16Bf16 {
+    using Ta = _Ta;
+    Ta *A;
+
+    __device__ __forceinline__ FusedMoeFirstGemmAInputFp16Bf16(Ta *A) : A(A) {}
+};
+
+template <typename...>
+struct isFusedMoeFirstGemmAInputFp16Bf16 : std::false_type {};
+template <typename Ta>
+struct isFusedMoeFirstGemmAInputFp16Bf16<FusedMoeFirstGemmAInputFp16Bf16<Ta>>
+    : std::true_type {};
+
+template <typename AInput, typename HyperParams>
+    requires(isFusedMoeFirstGemmAInputFp16Bf16<AInput>::value)
+struct FusedMoeFirstGemmAIteratorFp16Bf16 {
+    using Ta = typename AInput::Ta;
+    static constexpr int APerWarp = HyperParams::APerWarp;
+    static constexpr int stages = HyperParams::stages;
+    static constexpr int elementsPerAccess = HyperParams::elementsPerAccess;
+    static constexpr int rowThreadsPerMma = HyperParams::rowThreadsPerMma;
+
+    UINT4 *A_ptr[APerWarp];
+    UINT4 tmpA[stages][APerWarp];
+    int A_ptr_offset = 0;
+
+    __device__ __forceinline__ void init_ptr(AInput &A_input, int k,
+                                             int warpRowsGroupBegin, int laneId,
+                                             int quarterWarpId,
+                                             int splitKStart) {
+        int A_offset = ((warpRowsGroupBegin * rowThreadsPerMma) *
+                        (k / elementsPerAccess)) +
+                       laneId + splitKStart * stages * WARP_SIZE;
+        for (int i = 0; i < APerWarp; i++) {
+            A_ptr[i] = reinterpret_cast<UINT4 *>(A_input.A) + A_offset +
+                       i * (rowThreadsPerMma * (k / elementsPerAccess));
+        }
+    }
+
+    __device__ __forceinline__ void init_ptr_neutral(AInput &A_input) {
+        for (int i = 0; i < APerWarp; i++) {
+            A_ptr[i] = reinterpret_cast<UINT4 *>(A_input.A);
+        }
+    }
+
+    __device__ __forceinline__ void load_and_advance(int stage_id) {
+        for (int i = 0; i < APerWarp; i++) {
+            tmpA[stage_id][i] = __builtin_mxc_load_global_async128(
+                reinterpret_cast<INT128 *>(A_ptr[i] + A_ptr_offset));
+        }
+        A_ptr_offset += WARP_SIZE;
+    }
+};
+
+template <typename...>
+struct isFusedMoeFirstGemmAIteratorFp16Bf16 : std::false_type {};
+template <typename AInput, typename HyperParams>
+struct isFusedMoeFirstGemmAIteratorFp16Bf16<
+    FusedMoeFirstGemmAIteratorFp16Bf16<AInput, HyperParams>> : std::true_type {
+};
+
+template <typename Tb, typename AIter, typename HyperParams>
+    requires(isFusedMoeFirstGemmAIteratorFp16Bf16<AIter>::value)
+struct FusedMoeFirstGemmMmaFp16Bf16 {
+    static constexpr int APerWarp = HyperParams::APerWarp;
+    static constexpr int numCycleB = HyperParams::numCycleB;
+    static constexpr int sharedNumCycleB = HyperParams::sharedNumCycleB;
+
+    __device__ __forceinline__ void
+    operator()(AIter &A_iter, UINT4 tmpB[numCycleB],
+               FLOAT4 C_f32[numCycleB][APerWarp], int stage_id) {
+#pragma unroll
+        for (int j = 0; j < sharedNumCycleB; j++) {
+            for (int i = 0; i < APerWarp; i++) {
+                C_f32[j][i] = mma_16x16x16f16<Tb>(
+                    A_iter.tmpA[stage_id][i][0], A_iter.tmpA[stage_id][i][1],
+                    tmpB[j][0], tmpB[j][1], C_f32[j][i]);
+                C_f32[j][i] = mma_16x16x16f16<Tb>(
+                    A_iter.tmpA[stage_id][i][2], A_iter.tmpA[stage_id][i][3],
+                    tmpB[j][2], tmpB[j][3], C_f32[j][i]);
+            }
+        }
+    }
+};
+
+template <typename Ta, typename Tb, typename Taccum, typename Tc,
+          typename HyperParams, typename AInput, typename AIterator,
+          typename Mma>
+__device__ void
+fused_moe_first_gemm_kernel(AInput A_input, Tb *B, Tc *C, int *sorted_token_ids,
+                            int m, int n, int k, Taccum alpha, int topk,
+                            int padded_ptr_number, int gemm_warp_id) {
+    constexpr int microBatchsize = HyperParams::microBatchsize;
+    constexpr int APerWarp = HyperParams::APerWarp;
+    constexpr int splitK = HyperParams::splitK;
+    constexpr int stages = HyperParams::stages;
+    constexpr int elementsPerAccess = HyperParams::elementsPerAccess;
+    constexpr int rowThreadsPerMma = HyperParams::rowThreadsPerMma;
+    constexpr int colThreadsPerMma = HyperParams::colThreadsPerMma;
+    constexpr int elementsPerThreadPerMma =
+        HyperParams::elementsPerThreadPerMma;
+    constexpr int warpPerBlock = HyperParams::warpPerBlock;
+    constexpr int numCycleB = HyperParams::numCycleB;
+    constexpr int numCycleBPerWarp = HyperParams::numCycleBPerWarp;
+    constexpr int sharedNumCycleB = HyperParams::sharedNumCycleB;
+    constexpr int sharedArriveCount = HyperParams::sharedArriveCount;
+
     const int rowsGroup = m / rowThreadsPerMma / APerWarp;
 
     using CStgType = __NATIVE_VECTOR__(sizeof(Tc), uint);
@@ -58,9 +170,6 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
     // modified here to support moe group gemm.
     // A ptr is no need modified, B ptr is need modified.
 
-    int A_offset =
-        ((warpRowsGroupBegin * rowThreadsPerMma) * (k / elementsPerAccess)) +
-        laneId + splitKStart * stages * WARP_SIZE;
     int B_offset_in_token =
         quarterWarpId + splitKStart * stages * colThreadsPerMma;
     int C_offset[numCycleB];
@@ -77,11 +186,9 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
                       warpRowsGroupBegin * colThreadsPerMma + quarterWarpId;
     }
 
-    UINT4 *A_ptr[APerWarp];
-    for (int i = 0; i < APerWarp; i++) {
-        A_ptr[i] = reinterpret_cast<UINT4 *>(A) + A_offset +
-                   i * (rowThreadsPerMma * (k / elementsPerAccess));
-    }
+    AIterator A_iter;
+    A_iter.init_ptr(A_input, k, warpRowsGroupBegin, laneId, quarterWarpId,
+                    splitKStart);
 
     ////// maybe has bugs now, should debug first
     UINT4 *B_ptr_tokens[numCycleBPerWarp];
@@ -110,9 +217,9 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
     UINT4 *shared_ptr =
         reinterpret_cast<UINT4 *>(&sharedTmpB[0][0][0]) + laneId;
 
-    UINT4 tmpA[stages][APerWarp];
     UINT4 tmpB[numCycleB];
     FLOAT4 C_f32[numCycleB][APerWarp];
+    Mma mma;
 
     for (int i = 0; i < numCycleB; i++) {
         for (int index_A = 0; index_A < APerWarp; index_A++) {
@@ -120,22 +227,16 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
         }
     }
 
-    if (end == 0)
-        for (int index_A = 0; index_A < APerWarp; index_A++) {
-            A_ptr[index_A] = reinterpret_cast<UINT4 *>(A);
-        }
-    int A_ptr_offset = 0;
+    if (end == 0) {
+        A_iter.init_ptr_neutral(A_input);
+    }
     int shared_ptr_offset = 0;
 
     // begin fill the pipeline
 #pragma unroll stages
     for (int t = 0; t < stages; t++) {
         asm("/* Stop compiler reordering (begin) */");
-        for (int index_A = 0; index_A < APerWarp; index_A++) {
-            tmpA[t][index_A] = __builtin_mxc_load_global_async128(
-                reinterpret_cast<INT128 *>(A_ptr[index_A] + A_ptr_offset));
-        }
-        A_ptr_offset += WARP_SIZE;
+        A_iter.load_and_advance(t);
 #pragma unroll
         for (int j = 0; j < numCycleBPerWarp; j += 1) {
             LDG_B128_BSM_WITH_PREDICATOR_NORET0(
@@ -162,23 +263,9 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
                 tmpB[j] = sharedTmpB[t][j][laneId];
             }
 
-#pragma unroll
-            for (int j = 0; j < sharedNumCycleB; j++) {
-                for (int index_A = 0; index_A < APerWarp; index_A++) {
-                    C_f32[j][index_A] = mma_16x16x16f16<Tb>(
-                        tmpA[t][index_A][0], tmpA[t][index_A][1], tmpB[j][0],
-                        tmpB[j][1], C_f32[j][index_A]);
-                    C_f32[j][index_A] = mma_16x16x16f16<Tb>(
-                        tmpA[t][index_A][2], tmpA[t][index_A][3], tmpB[j][2],
-                        tmpB[j][3], C_f32[j][index_A]);
-                }
-            }
+            mma(A_iter, tmpB, C_f32, t);
             __builtin_mxc_barrier_inst();
-            for (int index_A = 0; index_A < APerWarp; index_A++) {
-                tmpA[t][index_A] = __builtin_mxc_load_global_async128(
-                    reinterpret_cast<INT128 *>(A_ptr[index_A] + A_ptr_offset));
-            }
-            A_ptr_offset += WARP_SIZE;
+            A_iter.load_and_advance(t);
 #pragma unroll
             for (int j = 0; j < sharedNumCycleB; j++) {
                 LDG_B128_BSM_WITH_PREDICATOR_NORET0(
@@ -216,17 +303,7 @@ fused_moe_first_gemm_kernel(Ta *A, Tb *B, Tc *C, int *sorted_token_ids, int m,
             tmpB[j] = sharedTmpB[t][j][laneId];
         }
 
-#pragma unroll
-        for (int j = 0; j < sharedNumCycleB; j++) {
-            for (int index_A = 0; index_A < APerWarp; index_A++) {
-                C_f32[j][index_A] = mma_16x16x16f16<Tb>(
-                    tmpA[t][index_A][0], tmpA[t][index_A][1], tmpB[j][0],
-                    tmpB[j][1], C_f32[j][index_A]);
-                C_f32[j][index_A] = mma_16x16x16f16<Tb>(
-                    tmpA[t][index_A][2], tmpA[t][index_A][3], tmpB[j][2],
-                    tmpB[j][3], C_f32[j][index_A]);
-            }
-        }
+        mma(A_iter, tmpB, C_f32, t);
     }
     if (end == 0)
         return;
@@ -287,9 +364,15 @@ __global__ void __launch_bounds__(BLOCK_DIM_X)
     int gemm_warp_id = global_warp_id % warps_per_gemm;
     if (gemm_id >= dev_padded_num_experts[0])
         return;
-    fused_moe_first_gemm_kernel<Ta, Tb, Taccum, Tc, BLOCK_DIM_X, microBatchsize,
-                                APerWarp, splitK>(
-        A + experts_ids[gemm_id] * m * k, B, C,
+    using HyperParams =
+        FusedMoeFirstGemmKernelHyperParams<BLOCK_DIM_X, microBatchsize,
+                                           APerWarp, splitK>;
+    using AInput = FusedMoeFirstGemmAInputFp16Bf16<Ta>;
+    using AIterator = FusedMoeFirstGemmAIteratorFp16Bf16<AInput, HyperParams>;
+    using Mma = FusedMoeFirstGemmMmaFp16Bf16<Tb, AIterator, HyperParams>;
+    fused_moe_first_gemm_kernel<Ta, Tb, Taccum, Tc, HyperParams, AInput,
+                                AIterator, Mma>(
+        AInput(A + experts_ids[gemm_id] * m * k), B, C,
         sorted_token_ids + gemm_id * microBatchsize, m, n, k, alpha, topk,
         padded_ptr_number, gemm_warp_id);
 }
