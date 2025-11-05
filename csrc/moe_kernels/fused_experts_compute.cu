@@ -10,7 +10,8 @@ void fused_experts_compute(
     torch::Tensor &expertsIds, torch::Tensor &activedExpertsWeights,
     torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
-    torch::Tensor &dev_C, torch::Tensor &y) {
+    torch::Tensor &dev_C, torch::Tensor &y, int APerWarp, int splitK,
+    int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm) {
     TORCH_CHECK(experts_weights_matrix1.dtype() ==
                     experts_weights_matrix2.dtype(),
                 "experts_weights_matrix1 and experts_weights_matrix2 "
@@ -81,7 +82,8 @@ void fused_experts_compute(
                         dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
                         dev_experts_ids_ptr,
                         reinterpret_cast<half *>(dev_C.data_ptr()),
-                        reinterpret_cast<half *>(y.data_ptr()));
+                        reinterpret_cast<half *>(y.data_ptr()), APerWarp,
+                        splitK, tile_m_2, tile_n_2, tile_k_2, block_dim_x_gemm);
                 });
         } else {
             TORCH_CHECK(
@@ -117,7 +119,9 @@ void fused_experts_compute(
                         dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
                         dev_experts_ids_ptr,
                         reinterpret_cast<__maca_bfloat16 *>(dev_C.data_ptr()),
-                        reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()));
+                        reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()),
+                        APerWarp, splitK, tile_m_2, tile_n_2, tile_k_2,
+                        block_dim_x_gemm);
                 });
         }
     }

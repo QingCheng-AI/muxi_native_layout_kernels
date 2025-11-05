@@ -22,7 +22,8 @@ void fused_experts_compute_inner(
     int m1, int n1, int k1, int m2, int n2, int k2, int batchsize, int topK,
     int *expertsIds, A *activedExpertsWeights, int *dev_sorted_token_ids,
     int *dev_cumsum_buffer, int *dev_padded_num_experts, int *dev_experts_ids,
-    A *dev_C, A *y) {
+    A *dev_C, A *y, int APerWarp, int splitK, int tile_m_2, int tile_n_2,
+    int tile_k_2, int block_dim_x_gemm) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
     constexpr int micro_batchsize = 16;
@@ -53,26 +54,25 @@ void fused_experts_compute_inner(
 
     // second part, group gemms and silu_and_mul
 
-    constexpr int APerWarp = 2;
-    constexpr int splitK = 3;
-    constexpr int tile_m = 128;
-    constexpr int tile_n = 16;
-    constexpr int tile_k = 128;
-    constexpr int block_dim_x_gemm = 256;
-
     int max_gemm_count = max_num_m_blocks;
-    int max_gridsize =
-        (m1 / 16 / (block_dim_x_gemm / WARP_SIZE * APerWarp) * splitK) *
-        max_gemm_count;
-    int gemm2_gridsize_per_gemm = ((m2 + tile_m - 1) / tile_m) *
-                                  ((micro_batchsize + tile_n - 1) / tile_n);
-
-    fused_moe_first_group_gemm_kernel<W, A, Taccum, A, block_dim_x_gemm,
-                                      micro_batchsize, APerWarp, splitK>
-        <<<max_gridsize, block_dim_x_gemm, 0, stream>>>(
-            experts_weights_matrix1, activations, dev_C, dev_sorted_token_ids,
-            dev_experts_ids, m1, micro_batchsize, k1, 1.0f, topK,
-            topK * batchsize, dev_padded_num_experts);
+    dispatchToStaticInts<1, 2, 4>(APerWarp, [&]<int APERWARP>() {
+        dispatchToStaticInts<1, 2, 3>(splitK, [&]<int SPLITK>() {
+            dispatchToStaticInts<256, 512>(
+                block_dim_x_gemm, [&]<int BLOCK_DIM_X_GEMM>() {
+                    int max_gridsize =
+                        (m1 / 16 / (256 / WARP_SIZE * APERWARP) * SPLITK) *
+                        max_gemm_count;
+                    fused_moe_first_group_gemm_kernel<
+                        W, A, Taccum, A, BLOCK_DIM_X_GEMM, micro_batchsize,
+                        APERWARP, SPLITK>
+                        <<<max_gridsize, BLOCK_DIM_X_GEMM, 0, stream>>>(
+                            experts_weights_matrix1, activations, dev_C,
+                            dev_sorted_token_ids, dev_experts_ids, m1,
+                            micro_batchsize, k1, 1.0f, topK, topK * batchsize,
+                            dev_padded_num_experts);
+                });
+        });
+    });
 
     int silu_blockSize = nextPow2_bit(m1 / 2 / ELEMENTSPERACCESS);
     int silu_girdSize = batchsize * topK;
@@ -80,13 +80,27 @@ void fused_experts_compute_inner(
     silu_and_mul_kernel_block<A><<<silu_girdSize, silu_blockSize, 0, stream>>>(
         dev_C, batchsize * topK, m1);
 
-    fused_moe_second_group_gemm_kernel<W, A, Taccum, A, block_dim_x_gemm,
-                                       tile_m, tile_n, tile_k, micro_batchsize>
-        <<<gemm2_gridsize_per_gemm * max_gemm_count, block_dim_x_gemm, 0,
-           stream>>>(experts_weights_matrix2, dev_C, y, dev_sorted_token_ids,
-                     dev_experts_ids, m2, micro_batchsize, k2,
-                     activedExpertsWeights, topK * batchsize, topK,
-                     dev_padded_num_experts);
+    dispatchToStaticInts<64, 128, 256>(tile_m_2, [&]<int TILE_M>() {
+        dispatchToStaticInts<16>(tile_n_2, [&]<int TILE_N>() {
+            dispatchToStaticInts<128>(tile_k_2, [&]<int TILE_K>() {
+                dispatchToStaticInts<256, 512>(
+                    block_dim_x_gemm, [&]<int BLOCK_DIM_X_GEMM>() {
+                        int gemm2_gridsize_per_gemm =
+                            ((m2 + TILE_M - 1) / TILE_M) *
+                            ((micro_batchsize + TILE_N - 1) / TILE_N);
+                        fused_moe_second_group_gemm_kernel<
+                            W, A, Taccum, A, BLOCK_DIM_X_GEMM, TILE_M, TILE_N,
+                            TILE_K, micro_batchsize>
+                            <<<gemm2_gridsize_per_gemm * max_gemm_count,
+                               BLOCK_DIM_X_GEMM, 0, stream>>>(
+                                experts_weights_matrix2, dev_C, y,
+                                dev_sorted_token_ids, dev_experts_ids, m2,
+                                micro_batchsize, k2, activedExpertsWeights,
+                                topK * batchsize, topK, dev_padded_num_experts);
+                    });
+            });
+        });
+    });
 }
 
 // This is specifically for the case when using soft fp8
@@ -174,7 +188,9 @@ void fused_experts_compute(
     torch::Tensor &expertsIds, torch::Tensor &activedExpertsWeights,
     torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
-    torch::Tensor &dev_C, torch::Tensor &y);
+    torch::Tensor &dev_C, torch::Tensor &y, torch::Tensor &w1_scale,
+    torch::Tensor &w2_scale, std::vector<int64_t> &block_shape,
+    bool soft_fp8 = false);
 
 void fused_experts_compute(
     torch::Tensor &experts_weights_matrix1,
@@ -183,8 +199,7 @@ void fused_experts_compute(
     torch::Tensor &expertsIds, torch::Tensor &activedExpertsWeights,
     torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
-    torch::Tensor &dev_C, torch::Tensor &y, torch::Tensor &w1_scale,
-    torch::Tensor &w2_scale, std::vector<int64_t> &block_shape,
-    bool soft_fp8 = false);
+    torch::Tensor &dev_C, torch::Tensor &y, int APerWarp, int splitK,
+    int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm);
 
 } // namespace muxi_layout_kernels

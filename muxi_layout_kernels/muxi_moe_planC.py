@@ -10,27 +10,21 @@ def fused_moe(
     gating_output: torch.Tensor,  # [batch_size, num_experts]
     topk: int,
     renormalize: bool,
-    inplace: bool = False,
-    activation: str = "silu",
     use_grouped_topk: bool = False,
     num_expert_group: Optional[int] = None,
     topk_group: Optional[int] = None,
-    custom_routing_function: Optional[Callable] = None,
-    use_fp8_w8a8: bool = False,
-    use_int8_w8a16: bool = False,
-    use_int4_w4a16: bool = False,
-    global_num_experts: int = -1,
-    expert_map: Optional[torch.Tensor] = None,
     w1_scale: Optional[torch.Tensor] = None,
     w2_scale: Optional[torch.Tensor] = None,
-    w1_zp: Optional[torch.Tensor] = None,
-    w2_zp: Optional[torch.Tensor] = None,
-    a1_scale: Optional[torch.Tensor] = None,
-    a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
     gating_bias: Optional[torch.Tensor] = None,
     score_func: str = "softmax",
     soft_fp8: bool = False,
+    APerWarp: int = 2,
+    splitK: int = 3,
+    tile_m_2: int = 128,
+    tile_n_2: int = 16,
+    tile_k_2: int = 128,
+    block_dim_x_gemm: int = 256,
 ) -> torch.Tensor:
     assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
 
@@ -139,6 +133,12 @@ def fused_moe(
             experts_ids,
             C,
             y,
+            APerWarp=APerWarp,
+            splitK=splitK,
+            tile_m_2=tile_m_2,
+            tile_n_2=tile_n_2,
+            tile_k_2=tile_k_2,
+            block_dim_x_gemm=block_dim_x_gemm,
         )
     del sorted_token_ids, cumsum_buffer, padded_num_experts, experts_ids, C
 
