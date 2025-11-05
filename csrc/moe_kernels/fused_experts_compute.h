@@ -16,19 +16,12 @@
 
 namespace muxi_layout_kernels {
 
-template <int num_experts, typename W, typename Taccum, typename A>
-void fused_experts_compute_inner(
-    W *experts_weights_matrix1, W *experts_weights_matrix2, A *activations,
-    int m1, int n1, int k1, int m2, int n2, int k2, int batchsize, int topK,
-    int *expertsIds, A *activedExpertsWeights, int *dev_sorted_token_ids,
-    int *dev_cumsum_buffer, int *dev_padded_num_experts, int *dev_experts_ids,
-    A *dev_C, A *y, int APerWarp, int splitK, int tile_m_2, int tile_n_2,
-    int tile_k_2, int block_dim_x_gemm) {
+template <int num_experts, int micro_batchsize = 16>
+void batched_routed_activation_indexed_to_expert_block_indexed_inner(
+    int batchsize, int topK, int *expertsIds, int *dev_sorted_token_ids,
+    int *dev_cumsum_buffer, int *dev_padded_num_experts, int *dev_experts_ids) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
-    constexpr int micro_batchsize = 16;
-
-    // first part, align tokens
 
     int max_num_tokens_padded =
         ((topK * batchsize) + num_experts * (micro_batchsize - 1));
@@ -51,8 +44,24 @@ void fused_experts_compute_inner(
                                                stream>>>(
         expertsIds, dev_sorted_token_ids, dev_cumsum_buffer, topK * batchsize,
         max_num_tokens_padded);
+}
 
-    // second part, group gemms and silu_and_mul
+template <int num_experts, int micro_batchsize, typename W, typename Taccum,
+          typename A>
+void fused_experts_compute_inner(
+    W *experts_weights_matrix1, W *experts_weights_matrix2, A *activations,
+    int m1, int n1, int k1, int m2, int n2, int k2, int batchsize, int topK,
+    int *expertsIds, A *activedExpertsWeights, int *dev_sorted_token_ids,
+    int *dev_padded_num_experts, int *dev_experts_ids, A *dev_C, A *y,
+    int APerWarp, int splitK, int tile_m_2, int tile_n_2, int tile_k_2,
+    int block_dim_x_gemm) {
+    const mcStream_t stream =
+        at::cuda::getCurrentCUDAStream(at::cuda::current_device());
+
+    int max_num_tokens_padded =
+        ((topK * batchsize) + num_experts * (micro_batchsize - 1));
+    int max_num_m_blocks =
+        (max_num_tokens_padded + micro_batchsize - 1) / micro_batchsize;
 
     int max_gemm_count = max_num_m_blocks;
     dispatchToStaticInts<1, 2, 4>(APerWarp, [&]<int APERWARP>() {
@@ -104,43 +113,22 @@ void fused_experts_compute_inner(
 }
 
 // This is specifically for the case when using soft fp8
-template <int num_experts, typename W, typename Taccum, typename A>
+template <int num_experts, int micro_batchsize, typename W, typename Taccum,
+          typename A>
 void fused_experts_compute_inner(
     W *experts_weights_matrix1, W *experts_weights_matrix2, A *activations,
     int m1, int n1, int k1, int m2, int n2, int k2, int batchsize, int topK,
     int *expertsIds, A *activedExpertsWeights, int *dev_sorted_token_ids,
-    int *dev_cumsum_buffer, int *dev_padded_num_experts, int *dev_experts_ids,
-    A *dev_C, A *y, Taccum *w1_scale, Taccum *w2_scale, int w1_scale_m,
-    int w1_scale_n, int w2_scale_m, int w2_scale_n) {
+    int *dev_padded_num_experts, int *dev_experts_ids, A *dev_C, A *y,
+    Taccum *w1_scale, Taccum *w2_scale, int w1_scale_m, int w1_scale_n,
+    int w2_scale_m, int w2_scale_n) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
-    constexpr int micro_batchsize = 16;
-
-    // first part, align tokens
 
     int max_num_tokens_padded =
         ((topK * batchsize) + num_experts * (micro_batchsize - 1));
     int max_num_m_blocks =
         (max_num_tokens_padded + micro_batchsize - 1) / micro_batchsize;
-
-    int block_dim_x =
-        num_experts <= 8
-            ? 64
-            : (num_experts <= 16 ? 128 : (num_experts <= 32 ? 128 : (256)));
-    int block_dim_x_2 = std::min(256, block_dim_x);
-    int num_blocks = (topK * batchsize + block_dim_x_2 - 1) / block_dim_x_2;
-
-    moe_align_tokens_kernel<num_experts, micro_batchsize>
-        <<<1, block_dim_x, 0, stream>>>(
-            expertsIds, dev_experts_ids, dev_padded_num_experts,
-            topK * batchsize, max_num_m_blocks, dev_cumsum_buffer);
-
-    moe_align_tokens_sorted_token_ids_kernel<<<num_blocks, block_dim_x_2, 0,
-                                               stream>>>(
-        expertsIds, dev_sorted_token_ids, dev_cumsum_buffer, topK * batchsize,
-        max_num_tokens_padded);
-
-    // second part, group gemms and silu_and_mul
 
     constexpr int APerWarp = 2;
     constexpr int splitK = 3;
@@ -181,6 +169,12 @@ void fused_experts_compute_inner(
                      dev_padded_num_experts, w2_scale, w2_scale_m, w2_scale_n);
 }
 
+void batched_routed_activation_indexed_to_expert_block_indexed(
+    int batchSize, int expertCount, int topK, int microBatchSize,
+    torch::Tensor &expertsIds, torch::Tensor &dev_sorted_token_ids,
+    torch::Tensor &dev_cumsum_buffer, torch::Tensor &dev_padded_num_experts,
+    torch::Tensor &dev_experts_ids);
+
 void fused_experts_compute(
     torch::Tensor &experts_weights_matrix1,
     torch::Tensor &experts_weights_matrix2, torch::Tensor &activations,
@@ -189,8 +183,8 @@ void fused_experts_compute(
     torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, torch::Tensor &w1_scale,
-    torch::Tensor &w2_scale, std::vector<int64_t> &block_shape,
-    bool soft_fp8 = false);
+    torch::Tensor &w2_scale, std::vector<int64_t> &block_shape, bool soft_fp8,
+    int microBatchSize);
 
 void fused_experts_compute(
     torch::Tensor &experts_weights_matrix1,
@@ -200,6 +194,7 @@ void fused_experts_compute(
     torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, int APerWarp, int splitK,
-    int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm);
+    int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm,
+    int microBatchSize);
 
 } // namespace muxi_layout_kernels

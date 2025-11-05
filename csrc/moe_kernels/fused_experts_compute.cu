@@ -3,15 +3,56 @@
 
 namespace muxi_layout_kernels {
 
+void batched_routed_activation_indexed_to_expert_block_indexed(
+    int batchSize, int expertCount, int topK, int microBatchSize,
+    torch::Tensor &expertsIds, torch::Tensor &dev_sorted_token_ids,
+    torch::Tensor &dev_cumsum_buffer, torch::Tensor &dev_padded_num_experts,
+    torch::Tensor &dev_experts_ids) {
+    TORCH_CHECK(expertsIds.dtype() == torch::kInt32,
+                "expertsIds must be of type torch::kInt32.");
+    TORCH_CHECK(
+        expertsIds.device() == dev_sorted_token_ids.device(),
+        "expertsIds must be on the same device as dev_sorted_token_ids.");
+    TORCH_CHECK(expertsIds.device() == dev_cumsum_buffer.device(),
+                "expertsIds must be on the same device as dev_cumsum_buffer.");
+    TORCH_CHECK(
+        expertsIds.device() == dev_padded_num_experts.device(),
+        "expertsIds must be on the same device as dev_padded_num_experts.");
+    TORCH_CHECK(expertsIds.device() == dev_experts_ids.device(),
+                "expertsIds must be on the same device as dev_experts_ids.");
+
+    auto experts_ids_ptr = reinterpret_cast<int *>(expertsIds.data_ptr());
+    auto dev_sorted_token_ids_ptr =
+        reinterpret_cast<int *>(dev_sorted_token_ids.data_ptr());
+    auto dev_cumsum_buffer_ptr =
+        reinterpret_cast<int *>(dev_cumsum_buffer.data_ptr());
+    auto dev_padded_num_experts_ptr =
+        reinterpret_cast<int *>(dev_padded_num_experts.data_ptr());
+    auto dev_experts_ids_ptr =
+        reinterpret_cast<int *>(dev_experts_ids.data_ptr());
+
+    dispatchToStaticInts<8, 16, 32, 64, 128, 256>(
+        expertCount, [&]<int expertCount>() {
+            dispatchToStaticInts<16>(microBatchSize, [&]<int microBatchSize>() {
+                batched_routed_activation_indexed_to_expert_block_indexed_inner<
+                    expertCount, microBatchSize>(
+                    batchSize, topK, experts_ids_ptr, dev_sorted_token_ids_ptr,
+                    dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
+                    dev_experts_ids_ptr);
+            });
+        });
+}
+
 void fused_experts_compute(
     torch::Tensor &experts_weights_matrix1,
     torch::Tensor &experts_weights_matrix2, torch::Tensor &activations,
-    int64_t batchSize, int64_t expertCount, int64_t dynamicExpertsPerAct,
+    int64_t batchSize, int64_t expertCount, int64_t topK,
     torch::Tensor &expertsIds, torch::Tensor &activedExpertsWeights,
     torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, int APerWarp, int splitK,
-    int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm) {
+    int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm,
+    int microBatchSize) {
     TORCH_CHECK(experts_weights_matrix1.dtype() ==
                     experts_weights_matrix2.dtype(),
                 "experts_weights_matrix1 and experts_weights_matrix2 "
@@ -38,6 +79,11 @@ void fused_experts_compute(
         expertsIds.device() == activedExpertsWeights.device(),
         "expertsIds must be on the same device as activedExpertsWeights.");
 
+    batched_routed_activation_indexed_to_expert_block_indexed(
+        batchSize, expertCount, topK, microBatchSize, expertsIds,
+        dev_sorted_token_ids, dev_cumsum_buffer, dev_padded_num_experts,
+        dev_experts_ids);
+
     // int n1 = experts_weights_matrix1.size(0);
     int n1 = batchSize;
     int m1 = experts_weights_matrix1.size(1);
@@ -51,8 +97,6 @@ void fused_experts_compute(
     auto experts_ids_ptr = reinterpret_cast<int *>(expertsIds.data_ptr());
     auto dev_sorted_token_ids_ptr =
         reinterpret_cast<int *>(dev_sorted_token_ids.data_ptr());
-    auto dev_cumsum_buffer_ptr =
-        reinterpret_cast<int *>(dev_cumsum_buffer.data_ptr());
     auto dev_padded_num_experts_ptr =
         reinterpret_cast<int *>(dev_padded_num_experts.data_ptr());
     auto dev_experts_ids_ptr =
@@ -74,16 +118,21 @@ void fused_experts_compute(
                 reinterpret_cast<half *>(activedExpertsWeights.data_ptr());
             dispatchToStaticInts<8, 16, 32, 64, 128, 256>(
                 expertCount, [&]<int expertCount>() {
-                    fused_experts_compute_inner<expertCount, half, float, half>(
-                        w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
-                        static_cast<int>(batchSize),
-                        static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
-                        activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
-                        dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
-                        dev_experts_ids_ptr,
-                        reinterpret_cast<half *>(dev_C.data_ptr()),
-                        reinterpret_cast<half *>(y.data_ptr()), APerWarp,
-                        splitK, tile_m_2, tile_n_2, tile_k_2, block_dim_x_gemm);
+                    dispatchToStaticInts<16>(
+                        microBatchSize, [&]<int microBatchSize>() {
+                            fused_experts_compute_inner<
+                                expertCount, microBatchSize, half, float, half>(
+                                w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2,
+                                n2, k2, static_cast<int>(batchSize),
+                                static_cast<int>(topK), experts_ids_ptr,
+                                activedExpertsWeights_ptr,
+                                dev_sorted_token_ids_ptr,
+                                dev_padded_num_experts_ptr, dev_experts_ids_ptr,
+                                reinterpret_cast<half *>(dev_C.data_ptr()),
+                                reinterpret_cast<half *>(y.data_ptr()),
+                                APerWarp, splitK, tile_m_2, tile_n_2, tile_k_2,
+                                block_dim_x_gemm);
+                        });
                 });
         } else {
             TORCH_CHECK(
@@ -108,21 +157,25 @@ void fused_experts_compute(
             auto activedExpertsWeights_ptr =
                 reinterpret_cast<__maca_bfloat16 *>(
                     activedExpertsWeights.data_ptr());
-            dispatchToStaticInts<8, 16, 32, 64, 128, 256>(
-                expertCount, [&]<int expertCount>() {
-                    fused_experts_compute_inner<expertCount, __maca_bfloat16,
-                                                float, __maca_bfloat16>(
-                        w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
-                        static_cast<int>(batchSize),
-                        static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
-                        activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
-                        dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
-                        dev_experts_ids_ptr,
-                        reinterpret_cast<__maca_bfloat16 *>(dev_C.data_ptr()),
-                        reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()),
-                        APerWarp, splitK, tile_m_2, tile_n_2, tile_k_2,
-                        block_dim_x_gemm);
-                });
+            dispatchToStaticInts<8, 16, 32, 64, 128,
+                                 256>(expertCount, [&]<int expertCount>() {
+                dispatchToStaticInts<16>(
+                    microBatchSize, [&]<int microBatchSize>() {
+                        fused_experts_compute_inner<expertCount, microBatchSize,
+                                                    __maca_bfloat16, float,
+                                                    __maca_bfloat16>(
+                            w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2,
+                            k2, static_cast<int>(batchSize),
+                            static_cast<int>(topK), experts_ids_ptr,
+                            activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
+                            dev_padded_num_experts_ptr, dev_experts_ids_ptr,
+                            reinterpret_cast<__maca_bfloat16 *>(
+                                dev_C.data_ptr()),
+                            reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()),
+                            APerWarp, splitK, tile_m_2, tile_n_2, tile_k_2,
+                            block_dim_x_gemm);
+                    });
+            });
         }
     }
 }
@@ -130,12 +183,13 @@ void fused_experts_compute(
 void fused_experts_compute(
     torch::Tensor &experts_weights_matrix1,
     torch::Tensor &experts_weights_matrix2, torch::Tensor &activations,
-    int64_t batchSize, int64_t expertCount, int64_t dynamicExpertsPerAct,
+    int64_t batchSize, int64_t expertCount, int64_t topK,
     torch::Tensor &expertsIds, torch::Tensor &activedExpertsWeights,
     torch::Tensor &dev_sorted_token_ids, torch::Tensor &dev_cumsum_buffer,
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, torch::Tensor &w1_scale,
-    torch::Tensor &w2_scale, std::vector<int64_t> &block_shape, bool soft_fp8) {
+    torch::Tensor &w2_scale, std::vector<int64_t> &block_shape, bool soft_fp8,
+    int microBatchSize) {
     TORCH_CHECK(experts_weights_matrix1.dtype() ==
                     experts_weights_matrix2.dtype(),
                 "experts_weights_matrix1 and experts_weights_matrix2 "
@@ -162,6 +216,11 @@ void fused_experts_compute(
         expertsIds.device() == activedExpertsWeights.device(),
         "expertsIds must be on the same device as activedExpertsWeights.");
 
+    batched_routed_activation_indexed_to_expert_block_indexed(
+        batchSize, expertCount, topK, microBatchSize, expertsIds,
+        dev_sorted_token_ids, dev_cumsum_buffer, dev_padded_num_experts,
+        dev_experts_ids);
+
     // int n1 = experts_weights_matrix1.size(0);
     int n1 = batchSize;
     int m1 = experts_weights_matrix1.size(1);
@@ -175,8 +234,6 @@ void fused_experts_compute(
     auto experts_ids_ptr = reinterpret_cast<int *>(expertsIds.data_ptr());
     auto dev_sorted_token_ids_ptr =
         reinterpret_cast<int *>(dev_sorted_token_ids.data_ptr());
-    auto dev_cumsum_buffer_ptr =
-        reinterpret_cast<int *>(dev_cumsum_buffer.data_ptr());
     auto dev_padded_num_experts_ptr =
         reinterpret_cast<int *>(dev_padded_num_experts.data_ptr());
     auto dev_experts_ids_ptr =
@@ -203,15 +260,15 @@ void fused_experts_compute(
             reinterpret_cast<__maca_bfloat16 *>(activations.data_ptr());
         auto activedExpertsWeights_ptr = reinterpret_cast<__maca_bfloat16 *>(
             activedExpertsWeights.data_ptr());
-        dispatchToStaticInts<8, 16, 32, 64, 128, 256>(
-            expertCount, [&]<int expertCount>() {
-                fused_experts_compute_inner<expertCount, uint8_t, float,
-                                            __maca_bfloat16>(
+        dispatchToStaticInts<8, 16, 32, 64, 128,
+                             256>(expertCount, [&]<int expertCount>() {
+            dispatchToStaticInts<16>(microBatchSize, [&]<int microBatchSize>() {
+                fused_experts_compute_inner<expertCount, microBatchSize,
+                                            uint8_t, float, __maca_bfloat16>(
                     w1_ptr, w2_ptr, activations_ptr, m1, n1, k1, m2, n2, k2,
-                    static_cast<int>(batchSize),
-                    static_cast<int>(dynamicExpertsPerAct), experts_ids_ptr,
-                    activedExpertsWeights_ptr, dev_sorted_token_ids_ptr,
-                    dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
+                    static_cast<int>(batchSize), static_cast<int>(topK),
+                    experts_ids_ptr, activedExpertsWeights_ptr,
+                    dev_sorted_token_ids_ptr, dev_padded_num_experts_ptr,
                     dev_experts_ids_ptr,
                     reinterpret_cast<__maca_bfloat16 *>(dev_C.data_ptr()),
                     reinterpret_cast<__maca_bfloat16 *>(y.data_ptr()),
@@ -220,6 +277,7 @@ void fused_experts_compute(
                     w1_scale.size(1), w1_scale.size(2), w2_scale.size(1),
                     w2_scale.size(2));
             });
+        });
 
     } else {
         TORCH_CHECK(false, "Weight date type and activation date type "
