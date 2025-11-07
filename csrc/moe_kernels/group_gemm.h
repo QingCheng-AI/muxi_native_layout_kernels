@@ -8,7 +8,7 @@
 #include "copyAndLayoutB.h"
 #include "group_gemm_kernel.h"
 #include "group_gemm_utils.h"
-#include "silu_and_mul_kernel.h"
+#include "silu_and_mul.h"
 
 namespace muxi_layout_kernels {
 

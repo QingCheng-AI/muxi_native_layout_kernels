@@ -11,7 +11,7 @@
 #include "group_gemm_utils.h"
 #include "muxi_hgemm_layout.h"
 #include "muxi_hgemm_layout_fused.h"
-#include "silu_and_mul_kernel.h"
+#include "silu_and_mul.h"
 
 namespace muxi_layout_kernels {
 
@@ -179,7 +179,7 @@ void experts_compute_inner(W **experts_weights_matrix1,
     }
 
     // silu and mul
-    silu_and_mul<A><<<gemmCount, 256, 0, stream>>>(dev_C1, n1, m1, gemmCount);
+    silu_and_mul_sparse<A>(dev_C1, n1, m1, gemmCount, stream);
 
     // launch w2 group gemm
     if (batchSize <= 256) {

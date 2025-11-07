@@ -121,11 +121,7 @@ int main() {
 
     mcMemcpy(C, dev_C, sizeof(TC) * topk * m * batchsize, mcMemcpyDeviceToHost);
 
-    int silu_girdsize = (batchsize * topk + WARP_SIZE - 1) / WARP_SIZE;
-    int silu_blocksize = WARP_SIZE;
-
-    silu_and_mul_kernel<TB>
-        <<<silu_girdsize, silu_blocksize>>>(dev_C, batchsize * topk, m);
+    silu_and_mul_naive<TB>(dev_C, batchsize * topk, m, 0);
 
     mcMemcpy(C_silu, dev_C, sizeof(TC) * topk * m * batchsize,
              mcMemcpyDeviceToHost);

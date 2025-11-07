@@ -83,11 +83,7 @@ void fused_experts_compute_inner(
         });
     });
 
-    int silu_blockSize = nextPow2_bit(m1 / 2 / ELEMENTSPERACCESS);
-    int silu_girdSize = batchsize * topK;
-
-    silu_and_mul_kernel_block<A><<<silu_girdSize, silu_blockSize, 0, stream>>>(
-        dev_C, batchsize * topK, m1);
+    silu_and_mul_block<A>(dev_C, batchsize * topK, m1, stream);
 
     dispatchToStaticInts<64, 128, 256>(tile_m_2, [&]<int TILE_M>() {
         dispatchToStaticInts<16>(tile_n_2, [&]<int TILE_N>() {
@@ -153,11 +149,7 @@ void fused_experts_compute_inner(
             topK * batchsize, dev_padded_num_experts, w1_scale, w1_scale_m,
             w1_scale_n);
 
-    int silu_blockSize = nextPow2_bit(m1 / 2 / ELEMENTSPERACCESS);
-    int silu_girdSize = batchsize * topK;
-
-    silu_and_mul_kernel_block<A><<<silu_girdSize, silu_blockSize, 0, stream>>>(
-        dev_C, batchsize * topK, m1);
+    silu_and_mul_block<A>(dev_C, batchsize * topK, m1, stream);
 
     fused_moe_second_group_gemm_kernel<W, A, Taccum, A, block_dim_x_gemm,
                                        tile_m, tile_n, tile_k, micro_batchsize,
