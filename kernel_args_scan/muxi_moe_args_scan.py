@@ -49,14 +49,14 @@ def benchmark_fused_moe(
 
     for _ in range(100):
         maca_output = planC_moe(a, w1_transposed, w2_transposed, score, topk, renormalize=False, use_grouped_topk=True, num_expert_group=8, topk_group=4, gating_bias=bias, score_func=score_func,
-                                AperWarp=AperWarp, splitK=splitK,
+                                APerWarp=AperWarp, splitK=splitK,
                                 tile_m_2=tile_m_2, tile_n_2=tile_n_2, tile_k_2=tile_k_2)
     torch.cuda.synchronize()
 
     t1 = time.perf_counter()
     for _ in range(100):
         maca_output = planC_moe(a, w1_transposed, w2_transposed, score, topk, renormalize=False, use_grouped_topk=True, num_expert_group=8, topk_group=4, gating_bias=bias, score_func=score_func,
-                                AperWarp=AperWarp, splitK=splitK,
+                                APerWarp=AperWarp, splitK=splitK,
                                 tile_m_2=tile_m_2, tile_n_2=tile_n_2, tile_k_2=tile_k_2)
     
     torch.cuda.synchronize()

@@ -25,6 +25,7 @@ def fused_moe(
     tile_n_2: int = 16,
     tile_k_2: int = 128,
     block_dim_x_gemm: int = 256,
+    experts_map: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
 
@@ -118,6 +119,15 @@ def fused_moe(
             soft_fp8,
         )
     else:
+        if experts_map is not None and experts_map.dtype != torch.int:
+            experts_map = experts_map.to(torch.int)
+        # experts_map = torch.arange(w1.shape[0], dtype=torch.int, device=w1.device)
+        # experts_map[w1.shape[0] // 2 :] = experts_map[: w1.shape[0] // 2]
+        # experts_map[: w1.shape[0] // 2] = -1
+        experts_map = torch.arange(w1.shape[0] * 2, dtype=torch.int, device=w1.device)
+        experts_map[w1.shape[0] :] = experts_map[: w1.shape[0]]
+        experts_map[: w1.shape[0]] = -1
+        # breakpoint()
         muxi_layout_kernels.fused_experts_compute(
             w1,
             w2,
@@ -139,7 +149,9 @@ def fused_moe(
             tile_n_2=tile_n_2,
             tile_k_2=tile_k_2,
             block_dim_x_gemm=block_dim_x_gemm,
+            experts_map=experts_map,
         )
+    # breakpoint()
     del sorted_token_ids, cumsum_buffer, padded_num_experts, experts_ids, C
 
     return y.view(shape)

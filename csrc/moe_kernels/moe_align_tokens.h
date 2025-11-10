@@ -8,8 +8,8 @@ namespace muxi_layout_kernels {
 template <int num_experts, int micro_batchsize>
 __global__ void moe_align_tokens_kernel(
     const int *__restrict__ topk_ids, int *__restrict__ experts_ids,
-    int *__restrict__ dev_padded_num_experts, int topk_ids_numel,
-    int max_num_m_blocks, int *__restrict__ cumsum_buffer) {
+    int *experts_map, int *__restrict__ dev_padded_num_experts,
+    int topk_ids_numel, int max_num_m_blocks, int *__restrict__ cumsum_buffer) {
     constexpr int padded_num_experts =
         (num_experts + WARP_SIZE - 1) / WARP_SIZE * WARP_SIZE;
     constexpr int experts_per_warp =
@@ -43,7 +43,13 @@ __global__ void moe_align_tokens_kernel(
     for (int i = start_idx;
          i < topk_ids_numel && i < start_idx + tokens_per_thread; i++) {
         int expert_id = topk_ids[i];
-        atomicAdd(&shared_counts[expert_id], 1);
+        if (experts_map != nullptr) {
+            if (experts_map[expert_id] == -1)
+                continue;
+            atomicAdd(&shared_counts[experts_map[expert_id]], 1);
+        } else {
+            atomicAdd(&shared_counts[expert_id], 1);
+        }
     }
 
     __syncthreads();
@@ -90,7 +96,7 @@ __global__ void moe_align_tokens_kernel(
 // moe_align_blockSize kernel, compute sorted_token_ids
 __global__ void moe_align_tokens_sorted_token_ids_kernel(
     const int *__restrict__ topk_ids, int *__restrict__ sorted_token_ids,
-    int *__restrict__ cumsum_buffer, int topk_ids_numel,
+    int *experts_map, int *__restrict__ cumsum_buffer, int topk_ids_numel,
     int max_num_tokens_padded);
 
 } // namespace muxi_layout_kernels

@@ -7,7 +7,7 @@ void batched_routed_activation_indexed_to_expert_block_indexed(
     int batchSize, int expertCount, int topK, int microBatchSize,
     torch::Tensor &expertsIds, torch::Tensor &dev_sorted_token_ids,
     torch::Tensor &dev_cumsum_buffer, torch::Tensor &dev_padded_num_experts,
-    torch::Tensor &dev_experts_ids) {
+    torch::Tensor &dev_experts_ids, std::optional<torch::Tensor> experts_map) {
     TORCH_CHECK(expertsIds.dtype() == torch::kInt32,
                 "expertsIds must be of type torch::kInt32.");
     TORCH_CHECK(
@@ -22,6 +22,10 @@ void batched_routed_activation_indexed_to_expert_block_indexed(
                 "expertsIds must be on the same device as dev_experts_ids.");
 
     auto experts_ids_ptr = reinterpret_cast<int *>(expertsIds.data_ptr());
+    auto experts_map_ptr =
+        experts_map != std::nullopt
+            ? reinterpret_cast<int *>(experts_map->data_ptr())
+            : nullptr;
     auto dev_sorted_token_ids_ptr =
         reinterpret_cast<int *>(dev_sorted_token_ids.data_ptr());
     auto dev_cumsum_buffer_ptr =
@@ -36,9 +40,9 @@ void batched_routed_activation_indexed_to_expert_block_indexed(
             dispatchToStaticInts<16>(microBatchSize, [&]<int microBatchSize>() {
                 batched_routed_activation_indexed_to_expert_block_indexed_inner<
                     expertCount, microBatchSize>(
-                    batchSize, topK, experts_ids_ptr, dev_sorted_token_ids_ptr,
-                    dev_cumsum_buffer_ptr, dev_padded_num_experts_ptr,
-                    dev_experts_ids_ptr);
+                    batchSize, topK, experts_ids_ptr, experts_map_ptr,
+                    dev_sorted_token_ids_ptr, dev_cumsum_buffer_ptr,
+                    dev_padded_num_experts_ptr, dev_experts_ids_ptr);
             });
         });
 }
@@ -52,7 +56,7 @@ void fused_experts_compute(
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, int APerWarp, int splitK,
     int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm,
-    int microBatchSize) {
+    int microBatchSize, std::optional<torch::Tensor> experts_map) {
     TORCH_CHECK(experts_weights_matrix1.dtype() ==
                     experts_weights_matrix2.dtype(),
                 "experts_weights_matrix1 and experts_weights_matrix2 "
@@ -79,10 +83,13 @@ void fused_experts_compute(
         expertsIds.device() == activedExpertsWeights.device(),
         "expertsIds must be on the same device as activedExpertsWeights.");
 
+    int64_t experts_num = expertCount;
+    if (experts_map != std::nullopt)
+        experts_num = experts_map->size(0);
     batched_routed_activation_indexed_to_expert_block_indexed(
-        batchSize, expertCount, topK, microBatchSize, expertsIds,
+        batchSize, experts_num, topK, microBatchSize, expertsIds,
         dev_sorted_token_ids, dev_cumsum_buffer, dev_padded_num_experts,
-        dev_experts_ids);
+        dev_experts_ids, experts_map);
 
     // int n1 = experts_weights_matrix1.size(0);
     int n1 = batchSize;
@@ -189,7 +196,7 @@ void fused_experts_compute(
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, torch::Tensor &w1_scale,
     torch::Tensor &w2_scale, std::vector<int64_t> &block_shape, bool soft_fp8,
-    int microBatchSize) {
+    int microBatchSize, std::optional<torch::Tensor> experts_map) {
     TORCH_CHECK(experts_weights_matrix1.dtype() ==
                     experts_weights_matrix2.dtype(),
                 "experts_weights_matrix1 and experts_weights_matrix2 "
@@ -216,10 +223,13 @@ void fused_experts_compute(
         expertsIds.device() == activedExpertsWeights.device(),
         "expertsIds must be on the same device as activedExpertsWeights.");
 
+    int64_t experts_num = expertCount;
+    if (experts_map != std::nullopt)
+        experts_num = experts_map->size(0);
     batched_routed_activation_indexed_to_expert_block_indexed(
-        batchSize, expertCount, topK, microBatchSize, expertsIds,
+        batchSize, experts_num, topK, microBatchSize, expertsIds,
         dev_sorted_token_ids, dev_cumsum_buffer, dev_padded_num_experts,
-        dev_experts_ids);
+        dev_experts_ids, experts_map);
 
     // int n1 = experts_weights_matrix1.size(0);
     int n1 = batchSize;

@@ -107,22 +107,24 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           &batched_routed_activation_indexed_to_expert_block_indexed,
           "batchSize"_a, "expertCount"_a, "topK"_a, "microBatchSize"_a,
           "expertsIds"_a, "dev_sorted_token_ids"_a, "dev_cumsum_buffer"_a,
-          "dev_padded_num_experts"_a, "dev_experts_ids"_a);
+          "dev_padded_num_experts"_a, "dev_experts_ids"_a,
+          "experts_map"_a = std::nullopt);
     m.def(
         "fused_experts_compute",
         static_cast<void (*)(
             torch::Tensor &, torch::Tensor &, torch::Tensor &, int64_t, int64_t,
             int64_t, torch::Tensor &, torch::Tensor &, torch::Tensor &,
             torch::Tensor &, torch::Tensor &, torch::Tensor &, torch::Tensor &,
-            torch::Tensor &, int, int, int, int, int, int, int)>(
-            &fused_experts_compute),
+            torch::Tensor &, int, int, int, int, int, int, int,
+            std::optional<torch::Tensor>)>(&fused_experts_compute),
         "experts_weights_matrix1"_a, "experts_weights_matrix2"_a,
         "activations"_a, "batch_size"_a, "expert_count"_a,
         "dynamic_experts_per_act"_a, "topk_ids"_a, "actived_experts_weights"_a,
         "sorted_token_ids"_a, "cumsum_buffer"_a, "padded_num_experts"_a,
         "experts_ids"_a, "C"_a, "y"_a, "APerWarp"_a = 2, "splitK"_a = 3,
         "tile_m_2"_a = 128, "tile_n_2"_a = 16, "tile_k_2"_a = 128,
-        "block_dim_x_gemm"_a = 256, "microBatchSize"_a = 16);
+        "block_dim_x_gemm"_a = 256, "microBatchSize"_a = 16,
+        "experts_map"_a = std::nullopt);
     m.def(
         "fused_experts_compute",
         static_cast<void (*)(
@@ -130,11 +132,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             int64_t, torch::Tensor &, torch::Tensor &, torch::Tensor &,
             torch::Tensor &, torch::Tensor &, torch::Tensor &, torch::Tensor &,
             torch::Tensor &, torch::Tensor &, torch::Tensor &,
-            std::vector<int64_t> &, bool, int)>(&fused_experts_compute),
+            std::vector<int64_t> &, bool, int, std::optional<torch::Tensor>)>(
+            &fused_experts_compute),
         "experts_weights_matrix1"_a, "experts_weights_matrix2"_a,
         "activations"_a, "batch_size"_a, "expert_count"_a,
         "dynamic_experts_per_act"_a, "topk_ids"_a, "actived_experts_weights"_a,
         "sorted_token_ids"_a, "cumsum_buffer"_a, "padded_num_experts"_a,
         "experts_ids"_a, "C"_a, "y"_a, "w1_scale"_a, "w2_scale"_a,
-        "block_shape"_a, "soft_fp8"_a = false, "microBatchSize"_a = 16);
+        "block_shape"_a, "soft_fp8"_a = false, "microBatchSize"_a = 16,
+        "experts_map"_a = std::nullopt);
 }

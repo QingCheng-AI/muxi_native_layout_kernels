@@ -18,8 +18,9 @@ namespace muxi_layout_kernels {
 
 template <int num_experts, int micro_batchsize = 16>
 void batched_routed_activation_indexed_to_expert_block_indexed_inner(
-    int batchsize, int topK, int *expertsIds, int *dev_sorted_token_ids,
-    int *dev_cumsum_buffer, int *dev_padded_num_experts, int *dev_experts_ids) {
+    int batchsize, int topK, int *expertsIds, int *experts_map,
+    int *dev_sorted_token_ids, int *dev_cumsum_buffer,
+    int *dev_padded_num_experts, int *dev_experts_ids) {
     const mcStream_t stream =
         at::cuda::getCurrentCUDAStream(at::cuda::current_device());
 
@@ -37,13 +38,13 @@ void batched_routed_activation_indexed_to_expert_block_indexed_inner(
 
     moe_align_tokens_kernel<num_experts, micro_batchsize>
         <<<1, block_dim_x, 0, stream>>>(
-            expertsIds, dev_experts_ids, dev_padded_num_experts,
+            expertsIds, dev_experts_ids, experts_map, dev_padded_num_experts,
             topK * batchsize, max_num_m_blocks, dev_cumsum_buffer);
 
     moe_align_tokens_sorted_token_ids_kernel<<<num_blocks, block_dim_x_2, 0,
                                                stream>>>(
-        expertsIds, dev_sorted_token_ids, dev_cumsum_buffer, topK * batchsize,
-        max_num_tokens_padded);
+        expertsIds, dev_sorted_token_ids, experts_map, dev_cumsum_buffer,
+        topK * batchsize, max_num_tokens_padded);
 }
 
 template <int num_experts, int micro_batchsize, typename W, typename Taccum,
@@ -165,7 +166,7 @@ void batched_routed_activation_indexed_to_expert_block_indexed(
     int batchSize, int expertCount, int topK, int microBatchSize,
     torch::Tensor &expertsIds, torch::Tensor &dev_sorted_token_ids,
     torch::Tensor &dev_cumsum_buffer, torch::Tensor &dev_padded_num_experts,
-    torch::Tensor &dev_experts_ids);
+    torch::Tensor &dev_experts_ids, std::optional<torch::Tensor> experts_map);
 
 void fused_experts_compute(
     torch::Tensor &experts_weights_matrix1,
@@ -176,7 +177,7 @@ void fused_experts_compute(
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, torch::Tensor &w1_scale,
     torch::Tensor &w2_scale, std::vector<int64_t> &block_shape, bool soft_fp8,
-    int microBatchSize);
+    int microBatchSize, std::optional<torch::Tensor> experts_map);
 
 void fused_experts_compute(
     torch::Tensor &experts_weights_matrix1,
@@ -187,6 +188,6 @@ void fused_experts_compute(
     torch::Tensor &dev_padded_num_experts, torch::Tensor &dev_experts_ids,
     torch::Tensor &dev_C, torch::Tensor &y, int APerWarp, int splitK,
     int tile_m_2, int tile_n_2, int tile_k_2, int block_dim_x_gemm,
-    int microBatchSize);
+    int microBatchSize, std::optional<torch::Tensor> experts_map);
 
 } // namespace muxi_layout_kernels
