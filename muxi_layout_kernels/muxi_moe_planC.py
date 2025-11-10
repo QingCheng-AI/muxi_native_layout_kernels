@@ -79,14 +79,14 @@ def fused_moe(
 
     # print("begin experts compute")
     topK = topk_weights.size(1)
-    max_num_tokens_padded = (topK * B) + e1 * (micro_batchsize - 1)
+    max_num_tokens_padded = (topK * B) + num_experts * (micro_batchsize - 1)
     sorted_token_ids = torch.full(
         (max_num_tokens_padded,),
         fill_value=(B * topK),
         dtype=torch.int32,
         device="cuda",
     )
-    cumsum_buffer = torch.empty(e1 + 1, dtype=torch.int32, device="cuda")
+    cumsum_buffer = torch.empty(num_experts + 1, dtype=torch.int32, device="cuda")
     padded_num_experts = torch.empty(1, dtype=torch.int32, device="cuda")
     experts_ids = torch.empty(
         (max_num_tokens_padded + micro_batchsize - 1) // micro_batchsize,
@@ -121,13 +121,6 @@ def fused_moe(
     else:
         if experts_map is not None and experts_map.dtype != torch.int:
             experts_map = experts_map.to(torch.int)
-        # experts_map = torch.arange(w1.shape[0], dtype=torch.int, device=w1.device)
-        # experts_map[w1.shape[0] // 2 :] = experts_map[: w1.shape[0] // 2]
-        # experts_map[: w1.shape[0] // 2] = -1
-        experts_map = torch.arange(w1.shape[0] * 2, dtype=torch.int, device=w1.device)
-        experts_map[w1.shape[0] :] = experts_map[: w1.shape[0]]
-        experts_map[: w1.shape[0]] = -1
-        # breakpoint()
         muxi_layout_kernels.fused_experts_compute(
             w1,
             w2,
@@ -151,7 +144,6 @@ def fused_moe(
             block_dim_x_gemm=block_dim_x_gemm,
             experts_map=experts_map,
         )
-    # breakpoint()
     del sorted_token_ids, cumsum_buffer, padded_num_experts, experts_ids, C
 
     return y.view(shape)
