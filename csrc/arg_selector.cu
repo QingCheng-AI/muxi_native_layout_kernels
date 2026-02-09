@@ -74,8 +74,7 @@ LayoutGemmArgSelector::getArgs(std::tuple<int, int, int> key) {
 
 std::string LayoutGemmArgSelector::get_dispatch_file_path() {
     namespace py = pybind11;
-    py::module importlib_resources =
-        py::module::import("importlib.resources");
+    py::module importlib_resources = py::module::import("importlib.resources");
     py::object resource =
         importlib_resources.attr("files")("muxi_layout_kernels")
             .attr("__truediv__")("layout_gemm_dispatch_arg.csv");
@@ -152,8 +151,7 @@ ContinuousGemmArgSelector::getArgs(std::tuple<int, int, int> key) {
 
 std::string ContinuousGemmArgSelector::get_dispatch_file_path() {
     namespace py = pybind11;
-    py::module importlib_resources =
-        py::module::import("importlib.resources");
+    py::module importlib_resources = py::module::import("importlib.resources");
     py::object resource =
         importlib_resources.attr("files")("muxi_layout_kernels")
             .attr("__truediv__")("continuous_gemm_dispatch_arg.csv");
@@ -228,9 +226,7 @@ LayoutGemvArgSelector::getArgs(std::tuple<int, int> key) {
 
 std::string LayoutGemvArgSelector::get_dispatch_file_path() {
     namespace py = pybind11;
-    namespace py = pybind11;
-    py::module importlib_resources =
-        py::module::import("importlib.resources");
+    py::module importlib_resources = py::module::import("importlib.resources");
     py::object resource =
         importlib_resources.attr("files")("muxi_layout_kernels")
             .attr("__truediv__")("layout_gemv_dispatch_arg.csv");
@@ -301,8 +297,7 @@ LayoutGemmJustLayoutAArgSelector::getArgs(std::tuple<int, int, int> key) {
 
 std::string LayoutGemmJustLayoutAArgSelector::get_dispatch_file_path() {
     namespace py = pybind11;
-    py::module importlib_resources =
-        py::module::import("importlib.resources");
+    py::module importlib_resources = py::module::import("importlib.resources");
     py::object resource =
         importlib_resources.attr("files")("muxi_layout_kernels")
             .attr("__truediv__")("layoutA_gemm_dispatch_arg.csv");
@@ -374,8 +369,7 @@ std::tuple<int, int, int, int> LayoutGemmJustLayoutASoftFp8ArgSelector::getArgs(
 
 std::string LayoutGemmJustLayoutASoftFp8ArgSelector::get_dispatch_file_path() {
     namespace py = pybind11;
-    py::module importlib_resources =
-        py::module::import("importlib.resources");
+    py::module importlib_resources = py::module::import("importlib.resources");
     py::object resource =
         importlib_resources.attr("files")("muxi_layout_kernels")
             .attr("__truediv__")("layoutA_Soft_Fp8_gemm_dispatch_arg.csv");
@@ -454,8 +448,7 @@ LayoutSoftFp8GemvArgSelector::getArgs(std::tuple<int, int> key) {
 
 std::string LayoutSoftFp8GemvArgSelector::get_dispatch_file_path() {
     namespace py = pybind11;
-    py::module importlib_resources =
-        py::module::import("importlib.resources");
+    py::module importlib_resources = py::module::import("importlib.resources");
     py::object resource =
         importlib_resources.attr("files")("muxi_layout_kernels")
             .attr("__truediv__")("layout_gemv_soft_fp8_dispatch_arg.csv");
@@ -532,8 +525,7 @@ LayoutBf16GemvArgSelector::getArgs(std::tuple<int, int> key) {
 
 std::string LayoutBf16GemvArgSelector::get_dispatch_file_path() {
     namespace py = pybind11;
-    py::module importlib_resources =
-        py::module::import("importlib.resources");
+    py::module importlib_resources = py::module::import("importlib.resources");
     py::object resource =
         importlib_resources.attr("files")("muxi_layout_kernels")
             .attr("__truediv__")("layout_gemv_bf16_dispatch_arg.csv");
